@@ -148,16 +148,36 @@ proj-a:D~project-a~src   → SDK 会话 C
 
 ### Idle auto-reclaim / 空闲自动回收
 
-客户端断开连接 5 分钟后，session 自动销毁并清理状态文件。
+客户端断开连接 5 分钟后，session 自动销毁。**历史会话保留**：
+内存中的 session 销毁，但磁盘状态文件保留并标记为 `lifecycleState: 'stopped'`。
+`listSessions` 会同时返回活跃 session（绿色）和历史 session（灰色虚线，可恢复）。
 
 ### List sessions / 查看会话
 
 ```javascript
 → { "type": "listSessions" }
 ← { "type": "session_list", "sessions": [
-    { "name": "proj-a", "cwd": "D:/project-a", "sessionId": "sess_xxx", "processing": false },
-    { "name": "proj-b", "cwd": "D:/project-b", "sessionId": "sess_yyy", "processing": true }
+    { "name": "proj-a", "cwd": "D:/project-a", "sessionId": "sess_xxx",
+      "processing": false, "lifecycleState": "active" },
+    { "name": "proj-b", "cwd": "D:/project-b", "sessionId": "sess_yyy",
+      "lifecycleState": "stopped",
+      "startedAt": "...", "updatedAt": "..." }
   ]}
+```
+
+| lifecycleState | 含义 |
+|----------------|------|
+| `active` | 内存中活跃，可直接发 query |
+| `stopped` | 已关闭但保留在磁盘，发 query 会自动 resume（`options.resume = sessionId`） |
+
+### Resume a historical session / 恢复历史会话
+
+直接对历史 session 发 `query`，服务端会自动用磁盘上保存的 `sessionId` 续接：
+
+```javascript
+→ { "type": "query", "session": "proj-a", "cwd": "D:/project-a", "prompt": "继续上次的话题" }
+// server: readState('proj-a:D~/project-a') → sessionId → options.resume
+// 上下文自动恢复
 ```
 
 ---

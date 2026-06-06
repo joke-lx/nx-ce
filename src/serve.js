@@ -18,7 +18,7 @@
 import { WebSocketServer } from 'ws';
 import { query as agentQuery } from '@anthropic-ai/claude-agent-sdk';
 import { hostname, machine, platform, release } from 'node:os';
-import { readState, writeState, deleteState, LifecycleState, createState } from './session-store.js';
+import { readState, writeState, deleteState, listStates, LifecycleState, createState } from './session-store.js';
 import { generateId, MonotonicClock, getMachineId } from './util.js';
 
 /** 默认端口 */
@@ -365,8 +365,13 @@ class SessionManager {
   /**
    * 销毁一个 session。
    * @param {string} key - 内部 key（name:cwd）
+   * @param {string} reason - 'shutdown' | 'client request' | 'idle timeout' | 'crash'
+   * @param {object} [opts]
+   * @param {boolean} [opts.keepHistory=true] - 是否保留磁盘状态（标记为 closed）
+   *   仅 'shutdown' 和 'crash' 会删除；其他情况保留为历史记录
    */
-  async destroy(key, reason = 'shutdown') {
+  async destroy(key, reason = 'shutdown', opts = {}) {
+    const { keepHistory = true } = opts;
     const session = this.sessions.get(key);
     if (!session || session.closed) return;
     session.closed = true;
@@ -379,26 +384,39 @@ class SessionManager {
 
     this.sessions.delete(key);
 
-    if (reason !== 'crash') {
+    if (reason === 'shutdown' || reason === 'crash' || !keepHistory) {
       deleteState(key);
+    } else {
+      // 标记为 closed，保留历史供 listSessions / resume 使用
+      const prev = readState(key);
+      if (prev) {
+        writeState(key, {
+          ...prev,
+          lifecycleState: LifecycleState.STOPPED,
+          closedAt: new Date().toISOString(),
+        });
+      }
     }
   }
 
   /**
    * 按客户端 name 销毁匹配的所有 session（包括不同 cwd）。
    * @param {string} name - 客户端传入的 session 名称
+   * @param {object} [opts] - 透传给 destroy()
    */
-  async destroyByName(name) {
+  async destroyByName(name, opts = {}) {
     const keys = [...this.sessions.keys()].filter(k => baseName(k) === name);
-    await Promise.allSettled(keys.map(k => this.destroy(k, 'client request')));
+    await Promise.allSettled(keys.map(k => this.destroy(k, 'client request', opts)));
   }
 
   /**
    * 销毁所有 session。
+   * @param {string} reason
+   * @param {object} [opts]
    */
-  async destroyAll(reason = 'shutdown') {
+  async destroyAll(reason = 'shutdown', opts = {}) {
     const keys = [...this.sessions.keys()];
-    await Promise.allSettled(keys.map(k => this.destroy(k, reason)));
+    await Promise.allSettled(keys.map(k => this.destroy(k, reason, opts)));
   }
 }
 
@@ -532,30 +550,64 @@ export async function startServe(options) {
 
         case 'closeSession': {
           if (req.cwd) {
-            // 精确关闭：name + cwd
+            // 精确关闭：name + cwd（保留历史）
             const key = sessionKey(sessionName, req.cwd);
-            await sessionManager.destroy(key, 'client request');
+            await sessionManager.destroy(key, 'client request', { keepHistory: true });
             ws.send(JSON.stringify({ type: 'session_closed', session: sessionName, cwd: req.cwd }));
           } else {
-            // 关闭该 name 下所有 cwd 变体
-            await sessionManager.destroyByName(sessionName);
+            // 关闭该 name 下所有 cwd 变体（保留历史）
+            await sessionManager.destroyByName(sessionName, { keepHistory: true });
             ws.send(JSON.stringify({ type: 'session_closed', session: sessionName }));
           }
           break;
         }
 
         case 'listSessions': {
-          const sessions = [...sessionManager.sessions.entries()]
-            .filter(([_, s]) => !s.closed)
-            .map(([key, s]) => ({
-              name: s.name,
+          // 合并：内存中活跃 session + 磁盘上历史 session
+          // 活跃优先（同 key 用活跃的元数据覆盖历史的）
+          const activeByKey = new Map();
+          for (const [key, s] of sessionManager.sessions) {
+            if (s.closed) continue;
+            activeByKey.set(key, {
               key,
+              name: s.name,
               cwd: s.cwd,
               sessionId: s.sessionId,
+              model: s.sdkOptions?.model,
               queueLength: s.queue.length,
               processing: s.processing,
-            }));
-          ws.send(JSON.stringify({ type: 'session_list', sessions }));
+              lifecycleState: 'active',
+              startedAt: s.existingState?.startedAt,
+              updatedAt: s.existingState?.updatedAt,
+            });
+          }
+
+          // 磁盘历史（每个 instance 文件对应一个 session）
+          // 跳过服务器级 entry（cwd === null 且 name 是 single token）
+          const historical = [];
+          for (const { name, state } of listStates()) {
+            // 服务器级 state 缺少 cwd 字段，跳过
+            if (!state || !state.cwd) continue;
+            // 已被活跃集合包含的，跳过
+            if (activeByKey.has(name)) continue;
+            historical.push({
+              key: name,
+              name: baseName(name),
+              cwd: state.cwd,
+              sessionId: state.sessionId,
+              model: state.model,
+              queueLength: 0,
+              processing: false,
+              lifecycleState: state.lifecycleState || 'closed',
+              startedAt: state.startedAt,
+              updatedAt: state.updatedAt,
+            });
+          }
+
+          ws.send(JSON.stringify({
+            type: 'session_list',
+            sessions: [...activeByKey.values(), ...historical],
+          }));
           break;
         }
 
