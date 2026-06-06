@@ -1,6 +1,6 @@
 {
   "name": "nx-ce",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Claude Engine — SDK adapter layer for native messaging host. Bridges @anthropic-ai/claude-agent-sdk calls over a length-prefixed JSON protocol.",
   "type": "module",
   "main": "src/index.js",
