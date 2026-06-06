@@ -134,12 +134,12 @@ class SessionManager {
       env: { ...process.env, ...env },
     };
 
-    if (existingState?.sessionId) {
-      sdkOptions.resume = existingState.sessionId;
-    }
-
     if (skills !== undefined && skills !== null) {
+      // 显式传了 skills：不续接旧 session，只加载指定 skills
       sdkOptions.skills = skills;
+    } else if (existingState?.sessionId) {
+      // 无显式 skills（占位 query）：续接旧 session，保持上下文
+      sdkOptions.resume = existingState.sessionId;
     }
 
     // 消息通道 — SDK 从此处拉取下一条用户消息
