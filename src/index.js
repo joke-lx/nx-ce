@@ -1,0 +1,11 @@
+/**
+ * nx-ce — 公开 API 入口
+ *
+ * 用法:
+ *   import { runQuery } from 'nx-ce';
+ *   const { text, sessionId } = await runQuery({ prompt: 'hello', ... });
+ */
+
+export { runQuery } from './query.js';
+export { readState, writeState, deleteState, listStates } from './session-store.js';
+export { readMessage, writeMessage } from './protocol.js';

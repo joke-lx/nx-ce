@@ -1,0 +1,6 @@
+.omc/
+node_modules/
+.nx-ce/
+*.log
+.DS_Store
+.claude/logs/
