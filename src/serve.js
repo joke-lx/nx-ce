@@ -91,6 +91,9 @@ class SessionManager {
       // 占位 query 不传 skills，正常 query 才传——所以用户发真实 query 时触发重建。
       if (skills !== undefined && skills !== null && Array.isArray(skills) && skills.length > 0) {
         await this.destroy(key, 'recreate with skills');
+        // 销毁后必须同时清理 _pendingCreates，否则旧 promise 仍在占位，
+        // 后面的创建逻辑会被跳过，返回无 skills 的旧 session。
+        this._pendingCreates.delete(key);
       } else {
         return existing;
       }
