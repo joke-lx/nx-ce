@@ -20,6 +20,7 @@ import { query as agentQuery } from '@anthropic-ai/claude-agent-sdk';
  * @param {string[]} [options.tools]       - 工具白名单（省略则使用 SDK 默认值）
  * @param {boolean} [options.persistSession] - 是否持久化会话（默认 true）
  * @param {string} [options.resumeSessionId] - 恢复之前的会话
+ * @param {string[]|'all'} [options.skills] - 加载哪些 Skill（数组或 'all'）
  * @param {AbortController} [options.signal] - 中止信号
  * @returns {Promise<{ text: string, sessionId: string | null }>}
  */
@@ -34,6 +35,7 @@ export async function runQuery(options) {
     tools,
     persistSession,
     resumeSessionId,
+    skills,
     signal,
   } = options;
 
@@ -65,6 +67,10 @@ export async function runQuery(options) {
 
   if (resumeSessionId) {
     sdkOptions.resume = resumeSessionId;
+  }
+
+  if (skills !== undefined) {
+    sdkOptions.skills = skills;
   }
 
   if (signal) {

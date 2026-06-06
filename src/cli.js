@@ -22,7 +22,9 @@ export function parseArgs(argv = process.argv.slice(2)) {
   const rest = argv.slice(1);
 
   // 解析 --key=value 或 --key value 选项
+  // positional 只收集非 -- 开头的参数
   const flags = {};
+  const positional = [];
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg.startsWith('--')) {
@@ -34,10 +36,12 @@ export function parseArgs(argv = process.argv.slice(2)) {
         // --key value 格式（下一个参数作为值）
         flags[arg.slice(2)] = rest[++i] ?? true;
       }
+    } else {
+      positional.push(arg);
     }
   }
 
-  return { cmd, flags, args: rest };
+  return { cmd, flags, args: positional };
 }
 
 /**
@@ -62,6 +66,8 @@ export async function runCli() {
         claudePath: resolveClaudePath(flags['claude-path']),
         systemPrompt: flags['system-prompt'],
         persistSession: flags['no-persist'] ? false : undefined,
+        resumeSessionId: flags.resume,
+        skills: parseSkills(flags.skill),
         env: flags.env ? parseEnvString(flags.env) : undefined,
       });
 
@@ -103,6 +109,8 @@ export async function runCli() {
     --model <id>                  模型覆盖
     --claude-path <path>          Claude CLI 路径
     --system-prompt <text>        系统提示词覆盖
+    --resume <sessionId>          续接之前的会话（长对话）
+    --skill <name>[,<name>...]    加载指定 Skill（逗号分隔，传 "all" 加载全部）
     --no-persist                  不持久化会话
     --env "KEY=value,KEY2=val"    额外环境变量
 
@@ -158,4 +166,14 @@ function parseEnvString(str) {
     }
   }
   return result;
+}
+
+/**
+ * 解析 --skill 参数。
+ * 逗号分隔的列表 → 数组；"all" → "all"（由 SDK 处理）。
+ */
+function parseSkills(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (value === 'all' || value === 'ALL') return 'all';
+  return value.split(',').map((s) => s.trim()).filter(Boolean);
 }
