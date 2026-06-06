@@ -4,12 +4,12 @@
 [![CI](https://github.com/joke-lx/nx-ce/actions/workflows/npm-publish.yml/badge.svg)](https://github.com/joke-lx/nx-ce/actions/workflows/npm-publish.yml)
 
 **nx-ce** 是一个轻量级 Node.js 适配器，封装了 `@anthropic-ai/claude-agent-sdk`。
-通过长度前缀的 JSON 协议（与 Chrome Native Messaging 格式一致）在 stdin/stdout 上暴露 SDK 接口，
-支持一次性冷启动查询与持久化服务两种运行模式。
+通过长度前缀的 JSON 协议在 stdin/stdout 上暴露 SDK 接口，
+支持一次性冷启动查询与 WebSocket 持久化服务器两种运行模式。
 
 **nx-ce** is a lightweight Node.js adapter for `@anthropic-ai/claude-agent-sdk`.
-It exposes the SDK over stdin/stdout via a length-prefixed JSON protocol (identical to Chrome native messaging),
-supporting both one-shot cold-start queries and persistent serve sessions.
+It exposes the SDK via a WebSocket server or stdin/stdout protocol,
+supporting both one-shot cold-start queries and persistent server sessions.
 
 ---
 
@@ -55,22 +55,26 @@ nx-ce query "Analyze" --skill all
 | `--no-persist` | 不持久化会话 / Don't persist session |
 | `--env "KEY=value,KEY2=val"` | 额外环境变量 / Extra environment variables |
 
-### `nx-ce serve` — 持久化管理器进程 / Persistent manager process
+### `nx-ce serve` — WebSocket 持久化服务器 / WebSocket server
+
+单例进程，多客户端共享一个 SDK 会话，请求排队处理。
+Single process with multi-client support and FIFO query queue.
 
 ```bash
+nx-ce serve                     # 默认端口 3100
+nx-ce serve --port 3100         # 指定端口
 nx-ce serve --name chat-tab-1
-nx-ce serve --name default --model claude-sonnet-4-6
 ```
-
-通过 stdin/stdout 接收 4B+JSON 协议消息，保持一个持久化的 SDK 会话。
-Reads/writes 4B+JSON protocol messages over stdin/stdout, maintaining a persistent SDK session.
 
 | 选项 / Flag | 说明 / Description |
 |-------------|-------------------|
 | `--name <name>` | 实例名称（默认 `"default"`）/ Instance name |
+| `--port <port>` | WebSocket 端口（默认 `3100`）/ WebSocket port |
 | `--model <id>` | 模型 ID 覆盖 / Model override |
 | `--claude-path <path>` | Claude CLI 可执行文件路径 / Path to Claude CLI binary |
 | `--env "KEY=value,..."` | 额外环境变量 / Extra environment variables |
+
+> WebSocket 地址: `ws://127.0.0.1:3100`
 
 ### `nx-ce status` — 查看实例状态 / Show instance state
 
@@ -87,11 +91,78 @@ nx-ce help
 
 ---
 
-## 协议 / Protocol
+## WebSocket 协议 / WebSocket Protocol
 
-所有 IPC 使用与 Chrome Native Messaging 一致的线缆格式：
+服务端地址 `ws://127.0.0.1:PORT`（默认 3100）。所有消息均为 JSON 字符串（不含长度前缀）。
 
-All IPC uses the same wire format as Chrome native messaging:
+Server at `ws://127.0.0.1:PORT` (default 3100). All messages are JSON strings (no length prefix).
+
+### 客户端发送 / Client → Server
+
+| type | 字段 / Fields | 说明 / Description |
+|------|---------------|-------------------|
+| `query` | `prompt: string`, `id?: string` | 发起查询 / Submit a query |
+| `ping` | 无 | 心跳检测 / Heartbeat |
+| `getSkills` | 无 | 拉取技能/工具列表 / Fetch skills & tools |
+
+```json
+→ { "type": "query", "prompt": "解释这段代码" }
+→ { "type": "ping" }
+→ { "type": "getSkills" }
+```
+
+### 服务端发送 / Server → Client
+
+**连接建立 / On connect:**
+
+```json
+← { "type": "connected", "sessionId": "sess_xxx", "port": 3100 }
+← { "type": "init", "sessionId": "sess_xxx", "model": "claude-sonnet-4-6",
+    "skills": [...], "tools": [...], "slashCommands": [...], "agents": [...] }
+```
+
+**查询响应 / Query response (streamed chunks):**
+
+```json
+← { "type": "text",     "content": "这是一段回复..." }
+← { "type": "thinking", "content": "模型思考过程..." }
+← { "type": "tool_use", "name": "readFile", "input": {...}, "id": "toolu_xxx" }
+← { "type": "done",     "sessionId": "sess_xxx" }
+```
+
+**其他 / Other:**
+
+```json
+← { "type": "pong",  "sessionId": "sess_xxx" }
+← { "type": "skills", "skills": [...], "tools": [...], "slashCommands": [...], "agents": [...] }
+← { "type": "error", "content": "error message" }
+```
+
+### 完整示例 / Full exchange
+
+```
+→ { "type": "query", "prompt": "Hello" }
+← { "type": "text",     "content": "Hello! How can I help you today?" }
+← { "type": "done",     "sessionId": "sess_abc123" }
+
+→ { "type": "ping" }
+← { "type": "pong",     "sessionId": "sess_abc123" }
+```
+
+### 单例机制 / Singleton guarantee
+
+重复启动 `nx-ce serve` 会在同一端口上失败：
+
+```
+端口 3100 已被占用 — nx-ce 单例进程已在运行中
+Port 3100 already in use — another nx-ce instance is running
+```
+
+---
+
+## 协议 / Protocol (stdin/stdout)
+
+`nx-ce query` 子命令仍使用长度前缀 JSON（Chrome Native Messaging 格式）：
 
 ```
 [4 bytes LE uint32 = 负载长度 / payload length][UTF-8 JSON payload]
@@ -102,45 +173,14 @@ All IPC uses the same wire format as Chrome native messaging:
 ```
 → { "prompt": "...", "model": "...", "systemPrompt": "..." }
 ← { "text": "...", "sessionId": "sess_xxx" }
-
-# 加 --include-metadata 时返回 metadata
-# With --include-metadata, response includes metadata:
-← { "text": "...", "sessionId": "sess_xxx", "metadata": { "skills": [...], "tools": [...], "slashCommands": [...] } }
 ```
 
-### 服务（持久化）/ Serve (persistent)
+### 带元数据输出 / With metadata
 
 ```
-→ { "id":"1", "type":"query", "prompt":"..." }
-← { "id":"1", "type":"text", "content":"..." }
-← { "id":"1", "type":"tool_use", "name":"readFile", "input":{...} }
-← { "id":"1", "type":"thinking", "content":"..." }
-← { "id":"1", "type":"done", "sessionId":"..." }
-
-→ { "type":"ping" }
-← { "type":"pong", "sessionId":"..." }
-
-→ { "type":"getSkills" }
-← { "type":"skills", "skills":["browse",...], "tools":["Read",...], "slashCommands":[...], "agents":[...] }
-
-(首次 init 自动推送)
-← { "type":"init", "skills":[...], "tools":[...], ... }
+← { "text": "...", "sessionId": "sess_xxx",
+    "metadata": { "skills": [...], "tools": [...], "slashCommands": [...] } }
 ```
-
-协议消息类型 / Message types:
-
-| 方向 / Dir | type | 说明 / Description |
-|------------|------|-------------------|
-| → | `query` | 用户输入 / User input |
-| ← | `text` | 文本回复 / Text response |
-| ← | `tool_use` | 工具调用请求 / Tool use request |
-| ← | `thinking` | 思考过程 / Model thinking |
-| ← | `done` | 本轮完成，含会话 ID / Turn complete with session ID |
-| ← | `error` | 错误消息 / Error message |
-| → | `ping` | 心跳检测 / Heartbeat |
-| ← | `pong` | 心跳回复 / Heartbeat response |
-| → | `getSkills` | Go 端按需拉取技能/工具列表 / Fetch skills/tools list |
-| ← | `init` / `skills` | 技能列表回复 / Skills metadata response |
 
 ---
 
@@ -148,10 +188,8 @@ All IPC uses the same wire format as Chrome native messaging:
 
 ```
 Chrome Extension / 浏览器扩展
-       ↕ Native Messaging (4B+JSON)
-Native Host (Go)
-       ↕ 4B+JSON (via executor.startProcess)
-nx-ce serve (Node.js)
+       ↕ WebSocket (ws://127.0.0.1:3100)
+nx-ce serve (Node.js)   ← 单例进程 / singleton process
        ↕ @anthropic-ai/claude-agent-sdk
 Claude Code CLI (子进程 / subprocess)
 ```
@@ -164,8 +202,6 @@ Claude Code CLI (子进程 / subprocess)
 每个命名实例存储其 PID、会话 ID 和启动时间，用于崩溃恢复和会话续接。
 
 Persisted to `~/.nx-ce/instances/{name}.json`. Each named instance stores its PID, session ID, and start time for crash recovery and session resumption.
-
-示例状态文件 / Example state file:
 
 ```json
 {
@@ -182,8 +218,11 @@ Persisted to `~/.nx-ce/instances/{name}.json`. Each named instance stores its PI
 ## 开发 / Development
 
 ```bash
-# 本地运行 / Run locally
+# 本地运行一次查询 / Run a one-shot query
 node ./bin/nx-ce.js query "你好"
+
+# 启动 WebSocket 服务 / Start WebSocket server
+node ./bin/nx-ce.js serve --port 3100
 
 # 检查语法 / Check syntax
 node -c src/*.js

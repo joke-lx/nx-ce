@@ -83,7 +83,7 @@ export async function runCli() {
     }
 
     case 'serve': {
-      // 持久化服务模式
+      // WebSocket 持久化服务模式
       const name = flags.name || 'default';
 
       const result = await startServe({
@@ -92,6 +92,7 @@ export async function runCli() {
         model: flags.model,
         cwd: flags.cwd || process.cwd(),
         env: flags.env ? parseEnvString(flags.env) : undefined,
+        port: flags.port ? parseInt(flags.port, 10) : undefined,
       });
 
       return result;
@@ -132,8 +133,9 @@ export async function runCli() {
     --no-persist                  不持久化会话
     --env "KEY=value,KEY2=val"    额外环境变量
 
-  nx-ce serve                     持久化管理器进程（stdin/stdout）
+  nx-ce serve                     WebSocket 持久化服务器（单一进程 / 多客户端）
     --name <name>                 实例名称（默认: "default"）
+    --port <port>                 WebSocket 端口（默认: 3100）
     --model <id>                  模型覆盖
     --claude-path <path>          Claude CLI 路径
     --env "KEY=value,..."         额外环境变量
