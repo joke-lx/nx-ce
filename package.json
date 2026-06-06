@@ -1,7 +1,7 @@
 {
   "name": "nx-ce",
-  "version": "0.1.8",
-  "description": "Claude Engine — SDK adapter layer for native messaging host. Bridges @anthropic-ai/claude-agent-sdk calls over a length-prefixed JSON protocol.",
+  "version": "0.2.0",
+  "description": "Claude Engine — WebSocket adapter for @anthropic-ai/claude-agent-sdk. Single serve mode serves all consumers (CLI / Chrome extension / native_host) over a unified JSON-over-WebSocket protocol.",
   "type": "module",
   "main": "src/index.js",
   "bin": {
@@ -17,8 +17,8 @@
   },
   "scripts": {
     "nx-ce": "node ./bin/nx-ce.js",
-    "test": "node test/basic.js",
-    "start": "node ./bin/nx-ce.js"
+    "test": "node test/serve-test.mjs",
+    "start": "node ./bin/nx-ce.js serve"
   },
   "keywords": [
     "claude",
@@ -26,7 +26,8 @@
     "anthropic",
     "sdk",
     "native-messaging",
-    "chrome-extension"
+    "chrome-extension",
+    "websocket"
   ],
   "license": "MIT",
   "dependencies": {

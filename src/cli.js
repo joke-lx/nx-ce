@@ -1,14 +1,15 @@
 /**
- * CLI — 子命令路由器
+ * CLI — 子命令路由器（v0.2 起仅 serve 模式）
  *
- * 模式：nx-sx/src/cli.js
- * 路由到 query | serve | status | help
+ * 历史:
+ *   - 旧版有 query（冷启动）/ skills（独立拉元数据）子命令
+ *   - v0.2 起所有调用统一收敛到 serve：所有元数据通过 getSkills 消息获取
+ *
+ * 路由: serve | status | help
  */
 
 import { existsSync } from 'node:fs';
-import { runQuery } from './query.js';
 import { startServe } from './serve.js';
-import { listSkills } from './skills.js';
 import { readState, listStates } from './session-store.js';
 
 /**
@@ -19,11 +20,9 @@ import { readState, listStates } from './session-store.js';
  * @returns {{ cmd: string, flags: object, args: string[] }}
  */
 export function parseArgs(argv = process.argv.slice(2)) {
-  const cmd = argv[0];          // 第一个参数为子命令
+  const cmd = argv[0];
   const rest = argv.slice(1);
 
-  // 解析 --key=value 或 --key value 选项
-  // positional 只收集非 -- 开头的参数
   const flags = {};
   const positional = [];
   for (let i = 0; i < rest.length; i++) {
@@ -31,13 +30,10 @@ export function parseArgs(argv = process.argv.slice(2)) {
     if (arg.startsWith('--')) {
       const eqIdx = arg.indexOf('=');
       if (eqIdx !== -1) {
-        // --key=value 格式
         flags[arg.slice(2, eqIdx)] = arg.slice(eqIdx + 1);
       } else if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) {
-        // --key 后面没有值，或下一个参数也是 flag → boolean flag
         flags[arg.slice(2)] = true;
       } else {
-        // --key value 格式（下一个参数作为值）
         flags[arg.slice(2)] = rest[++i] ?? true;
       }
     } else {
@@ -50,42 +46,14 @@ export function parseArgs(argv = process.argv.slice(2)) {
 
 /**
  * 运行 CLI 入口。
- * 根据子命令分发到对应的处理函数。
  */
 export async function runCli() {
-  const { cmd, flags, args } = parseArgs();
+  const { cmd, flags } = parseArgs();
 
   switch (cmd) {
-    case 'query': {
-      // 冷启动查询
-      const prompt = args[0] || flags.prompt;
-      if (!prompt) {
-        throw new Error('用法: nx-ce query <prompt> [--model ...] [--claude-path ...]');
-      }
-
-      const result = await runQuery({
-        prompt,
-        model: flags.model,
-        cwd: flags.cwd || process.cwd(),
-        claudePath: resolveClaudePath(flags['claude-path']),
-        systemPrompt: flags['system-prompt'],
-        persistSession: flags['no-persist'] ? false : undefined,
-        resumeSessionId: flags.resume,
-        skills: parseSkills(flags.skill),
-        env: flags.env ? parseEnvString(flags.env) : undefined,
-      });
-
-      // 默认只返回 text + sessionId，加 --include-metadata 才返回 metadata
-      if (flags['include-metadata']) {
-        return result;
-      }
-      return { text: result.text, sessionId: result.sessionId };
-    }
-
     case 'serve': {
-      // WebSocket 持久化服务模式
+      // WebSocket 持久化服务模式（唯一数据通路）
       const name = flags.name || 'default';
-
       const result = await startServe({
         name,
         claudePath: resolveClaudePath(flags['claude-path']),
@@ -94,57 +62,41 @@ export async function runCli() {
         env: flags.env ? parseEnvString(flags.env) : undefined,
         port: flags.port ? parseInt(flags.port, 10) : undefined,
       });
-
       return result;
     }
 
     case 'status': {
-      // 查询实例状态
       const name = flags.name;
       if (name) {
-        return readState(name); // 查询指定实例
+        return readState(name);
       }
-      return listStates();      // 列出所有实例
-    }
-
-    case 'skills': {
-      const result = await listSkills({
-        cwd: flags.cwd || process.cwd(),
-        claudePath: resolveClaudePath(flags['claude-path']),
-        env: flags.env ? parseEnvString(flags.env) : undefined,
-      });
-      return result;
+      return listStates();
     }
 
     case 'help':
+    case '--help':
+    case '-h':
     default:
-      // 显示帮助信息
       console.log(`
-	nx-ce — Claude Engine
+	nx-ce — Claude Engine (v0.2: serve-only)
 
 用法:
-  nx-ce query <prompt>            一次性冷启动查询
-    --model <id>                  模型覆盖
-    --claude-path <path>          Claude CLI 路径
-    --system-prompt <text>        系统提示词覆盖
-    --resume <sessionId>          续接之前的会话（长对话）
-    --skill <name>[,<name>...]    加载指定 Skill（逗号分隔，传 "all" 加载全部）
-    --include-metadata            输出中附带 skills/tools/slash_commands 列表
-    --no-persist                  不持久化会话
-    --env "KEY=value,KEY2=val"    额外环境变量
-
-  nx-ce serve                     WebSocket 持久化服务器（单一进程 / 多客户端）
+  nx-ce serve                     WebSocket 持久化服务器（唯一入口）
     --name <name>                 实例名称（默认: "default"）
     --port <port>                 WebSocket 端口（默认: 3100）
     --model <id>                  模型覆盖
     --claude-path <path>          Claude CLI 路径
+    --cwd <path>                  默认工作目录
     --env "KEY=value,..."         额外环境变量
 
   nx-ce status [--name <name>]   查看实例状态
 
-  nx-ce skills [--cwd <path>]        列出 SDK 可用 skill/tool/agent
-
   nx-ce help                      显示此帮助
+
+协议（ws://127.0.0.1:3100）:
+  C→S: query / getSkills / getStatus / listSessions / closeSession / ping
+  S→C: connected / init / turn_start / text / thinking / tool_use / done /
+       error / pong / skills / status / session_list / session_closed
 `);
       return null;
   }
@@ -152,32 +104,18 @@ export async function runCli() {
 
 /**
  * 解析 Claude CLI 路径。
- * 优先使用命令行参数，然后检查环境变量。
- *
- * @param {string|undefined} flag - 命令行传入的路径
- * @returns {string|undefined} 解析后的路径，未找到则返回 undefined（由 SDK 自动检测）
  */
 function resolveClaudePath(flag) {
   if (flag) return flag;
-  // 常见位置
-  const candidates = [
-    process.env.CLAUDE_PATH,
-    process.env.CLAUDE_CLI_PATH,
-    // Windows: npx、npm 全局或用户本地安装
-  ];
+  const candidates = [process.env.CLAUDE_PATH, process.env.CLAUDE_CLI_PATH];
   for (const c of candidates) {
     if (c && existsSync(c)) return c;
   }
-  // 未找到，让 SDK 自动检测
   return undefined;
 }
 
 /**
- * 解析环境变量字符串为对象。
- * 格式: "KEY=value,KEY2=val2"
- *
- * @param {string} str - 逗号分隔的 KEY=value 对
- * @returns {object}
+ * 解析环境变量字符串 "KEY=val,KEY2=val2"
  */
 function parseEnvString(str) {
   const result = {};
@@ -188,14 +126,4 @@ function parseEnvString(str) {
     }
   }
   return result;
-}
-
-/**
- * 解析 --skill 参数。
- * 逗号分隔的列表 → 数组；"all" → "all"（由 SDK 处理）。
- */
-function parseSkills(value) {
-  if (value === undefined || value === null || value === '') return undefined;
-  if (value === 'all' || value === 'ALL') return 'all';
-  return value.split(',').map((s) => s.trim()).filter(Boolean);
 }

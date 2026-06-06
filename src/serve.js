@@ -515,19 +515,43 @@ export async function startServe(options) {
           break;
 
         case 'getSkills': {
-          // 按 (name, cwd) 查 session
-          const key = sessionKey(sessionName, req.cwd);
-          const session = sessionManager.sessions.get(key);
-          if (session?.metadata) {
-            ws.send(JSON.stringify(session.metadata));
+          // 解析目标 session
+          //   带 session/cwd → 取该 session 的元数据
+          //   不带 → 取任意已 init 的 session 的元数据（server 级）
+          let meta = null;
+          if (req.session || req.cwd) {
+            const key = sessionKey(sessionName, req.cwd);
+            const session = sessionManager.sessions.get(key);
+            meta = session?.metadata;
           } else {
+            // server 级：找任意一个已 init 的 session
+            for (const s of sessionManager.sessions.values()) {
+              if (s.metadata) { meta = s.metadata; break; }
+            }
+          }
+
+          if (meta) {
+            // 统一返回 type='skills'，便于客户端按 type 路由
+            ws.send(JSON.stringify({
+              type: 'skills',
+              sessionId: meta.sessionId,
+              model: meta.model,
+              skills: meta.skills || [],
+              tools: meta.tools || [],
+              slashCommands: meta.slashCommands || [],
+              agents: meta.agents || [],
+              cwd: meta.cwd,
+            }));
+          } else {
+            // 无 init 元数据时：让客户端发一个 query 触发 init，或
+            // 等下一个 session 启动后再次 getSkills
             ws.send(JSON.stringify({
               type: 'skills',
               skills: [],
               tools: [],
               slashCommands: [],
               agents: [],
-              note: 'session not yet initialized',
+              note: 'no session has been initialized yet — send a query first',
             }));
           }
           break;

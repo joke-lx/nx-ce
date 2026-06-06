@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
 /**
- * nx-ce — Claude Engine
+ * nx-ce — Claude Engine (v0.2 serve-only)
  *
- * CLI entry point. Routes to subcommands:
- *   nx-ce query "prompt"    — one-shot cold-start query
- *   nx-ce serve             — persistent manager process (stdin/stdout protocol)
- *   nx-ce status            — show instance state
+ * Single entry point — all consumers (CLI / Chrome extension / native_host)
+ * talk to the WebSocket server via the unified protocol.
+ *
+ *   nx-ce serve [--port 3100]   — start WebSocket server
+ *   nx-ce status                — list instance states
+ *   nx-ce help                  — show help
  */
 
 import { runCli } from '../src/cli.js';

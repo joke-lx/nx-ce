@@ -3,13 +3,13 @@
 [![npm version](https://img.shields.io/npm/v/nx-ce)](https://www.npmjs.com/package/nx-ce)
 [![CI](https://github.com/joke-lx/nx-ce/actions/workflows/npm-publish.yml/badge.svg)](https://github.com/joke-lx/nx-ce/actions/workflows/npm-publish.yml)
 
-**nx-ce** is a lightweight Node.js adapter for `@anthropic-ai/claude-agent-sdk`. It provides two modes:
+**nx-ce** is a lightweight Node.js adapter for `@anthropic-ai/claude-agent-sdk`. As of **v0.2**, it provides a single mode:
 
-- **`nx-ce query`** — one-shot cold-start queries (stateless, CLI-friendly)
-- **`nx-ce serve`** — WebSocket multi-session server (persistent, concurrent clients)
+- **`nx-ce serve`** — WebSocket multi-session server (persistent, concurrent clients). All consumers (CLI scripts, Chrome extensions, native_host) connect via this single WS endpoint.
 
-**nx-ce** 是一个轻量级 Node.js 适配器，封装了 `@anthropic-ai/claude-agent-sdk`。支持两种运行模式：
-一次性冷启动查询与多会话 WebSocket 持久化服务器。
+**nx-ce** 是一个轻量级 Node.js 适配器，封装了 `@anthropic-ai/claude-agent-sdk`。
+**v0.2 起只提供一种模式**：`nx-ce serve` 启动 WebSocket 多会话服务器。
+所有调用方（CLI 脚本 / Chrome 扩展 / native_host）都通过这个唯一的 WS 端点与 SDK 通信。
 
 ---
 
@@ -35,47 +35,16 @@ npm install -g nx-ce
 ## Quick Start / 快速开始
 
 ```bash
-# One-shot query (stateless)
-nx-ce query "用中文回答：1+1=？" --model claude-haiku-4-5
-
-# Start WebSocket server (persistent, multi-session)
+# Start WebSocket server (the only mode)
 nx-ce serve --port 3100
 
 # In another terminal, run tests
 node test/serve-test.mjs
 ```
 
----
+> **v0.2 breaking change**: `nx-ce query` and `nx-ce skills` CLI subcommands removed. All consumers must use the WebSocket protocol. See the [Protocol](#websocket-protocol--websocket-协议) section below.
 
-## `nx-ce query` — One-Shot Cold-Start Query / 一次性冷启动查询
-
-```bash
-nx-ce query "解释这段代码" --model claude-sonnet-4-6
-nx-ce query "继续之前的对话" --resume sess_abc123
-nx-ce query "Analyze" --skill git-workflow,code-review
-nx-ce query "Analyze" --skill all
-```
-
-| Flag | Description / 说明 |
-|------|-------------------|
-| `--model <id>` | Model override (default `claude-sonnet-4-6`) / 模型 ID |
-| `--claude-path <path>` | Path to Claude CLI binary / Claude CLI 路径 |
-| `--system-prompt <text>` | System prompt override / 系统提示词覆盖 |
-| `--resume <sessionId>` | Resume a prior session (long conversation) / 续接会话 |
-| `--skill <name>[,<name>...]` | Load specific skills (comma-separated, or `all`) / 加载 Skill |
-| `--include-metadata` | Include skills/tools/slashCommands in output / 附带元数据 |
-| `--no-persist` | Don't persist session / 不持久化 |
-| `--env "KEY=val,KEY2=val"` | Extra environment variables / 额外环境变量 |
-
-### JSON output
-
-```json
-// Default
-{ "text": "2", "sessionId": "sess_abc" }
-
-// With --include-metadata
-{ "text": "2", "sessionId": "sess_abc", "metadata": { "skills": [...], "tools": [...], ... } }
-```
+> **v0.2 破坏性变更**：移除 `nx-ce query` 和 `nx-ce skills` 子命令。所有调用方必须使用 WebSocket 协议。
 
 ---
 
@@ -298,21 +267,6 @@ Each session has its own `agentQuery()`, `MessageChannel`, `MonotonicClock`, and
 
 ---
 
-## `nx-ce skills` — List Available Skills / 列出可用 Skill
-
-```bash
-nx-ce skills --cwd "D:/project"
-```
-
-```json
-{ "skills": ["code-review", "browse", ...],
-  "tools": ["Read", "Edit", "Bash", ...],
-  "slashCommands": ["code-review", ...],
-  "agents": ["Explore", ...] }
-```
-
----
-
 ## State Persistence / 状态持久化
 
 State files at `~/.nx-ce/instances/{key}.json`. Key format: `{name}~{cwd}`.
@@ -343,9 +297,6 @@ State files at `~/.nx-ce/instances/{key}.json`. Key format: `{name}~{cwd}`.
 ## Development / 开发
 
 ```bash
-# One-shot query
-node ./bin/nx-ce.js query "你好"
-
 # Start server
 node ./bin/nx-ce.js serve --port 3100
 
