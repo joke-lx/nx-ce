@@ -7,5 +7,6 @@
  */
 
 export { runQuery } from './query.js';
+export { listSkills } from './skills.js';
 export { readState, writeState, deleteState, listStates } from './session-store.js';
 export { readMessage, writeMessage } from './protocol.js';

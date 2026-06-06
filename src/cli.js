@@ -8,6 +8,7 @@
 import { existsSync } from 'node:fs';
 import { runQuery } from './query.js';
 import { startServe } from './serve.js';
+import { listSkills } from './skills.js';
 import { readState, listStates } from './session-store.js';
 
 /**
@@ -105,6 +106,15 @@ export async function runCli() {
       return listStates();      // 列出所有实例
     }
 
+    case 'skills': {
+      const result = await listSkills({
+        cwd: flags.cwd || process.cwd(),
+        claudePath: resolveClaudePath(flags['claude-path']),
+        env: flags.env ? parseEnvString(flags.env) : undefined,
+      });
+      return result;
+    }
+
     case 'help':
     default:
       // 显示帮助信息
@@ -129,6 +139,8 @@ export async function runCli() {
     --env "KEY=value,..."         额外环境变量
 
   nx-ce status [--name <name>]   查看实例状态
+
+  nx-ce skills [--cwd <path>]        列出 SDK 可用 skill/tool/agent
 
   nx-ce help                      显示此帮助
 `);
