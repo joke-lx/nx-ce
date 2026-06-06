@@ -86,7 +86,14 @@ class SessionManager {
     const existing = this.sessions.get(key);
     if (existing && !existing.closed) {
       this._cancelIdleTimer(key);
-      return existing;
+      // 如果已有 session 但本次显式传了 skills（不是空数组），
+      // 销毁旧的（await 完成），重建带 skills 的。
+      // 占位 query 不传 skills，正常 query 才传——所以用户发真实 query 时触发重建。
+      if (skills !== undefined && skills !== null && Array.isArray(skills) && skills.length > 0) {
+        await this.destroy(key, 'recreate with skills');
+      } else {
+        return existing;
+      }
     }
 
     // 正在被另一个协程创建 → 等它
@@ -129,6 +136,10 @@ class SessionManager {
 
     if (existingState?.sessionId) {
       sdkOptions.resume = existingState.sessionId;
+    }
+
+    if (skills !== undefined && skills !== null) {
+      sdkOptions.skills = skills;
     }
 
     // 消息通道 — SDK 从此处拉取下一条用户消息
