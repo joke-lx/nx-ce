@@ -79,7 +79,7 @@ class SessionManager {
    * @param {string} [cwd] - 工作目录（可选，默认服务器级 cwd）
    * @returns {Promise<Session>}
    */
-  async getOrCreate(name, cwd) {
+  async getOrCreate(name, cwd, skills) {
     const key = sessionKey(name, cwd);
 
     // 已有活跃 session → 直接返回
@@ -95,7 +95,7 @@ class SessionManager {
     }
 
     // 创建锁 + 创建
-    const promise = this._createSession(name, key, cwd);
+    const promise = this._createSession(name, key, cwd, skills);
     this._pendingCreates.set(key, promise);
 
     try {
@@ -108,7 +108,7 @@ class SessionManager {
   /**
    * 创建内部 session 结构。
    */
-  async _createSession(name, key, cwd) {
+  async _createSession(name, key, cwd, skills) {
     const { claudePath, model, env } = this.serverOptions;
 
     // session 用自己的 cwd（优先客户端传入，fallback 到服务器级）
@@ -510,7 +510,7 @@ export async function startServe(options) {
           // 同一 session name + 不同 cwd = 不同 SDK 会话
           let session;
           try {
-            session = await sessionManager.getOrCreate(sessionName, req.cwd);
+            session = await sessionManager.getOrCreate(sessionName, req.cwd, req.skills);
           } catch (err) {
             ws.send(JSON.stringify({ type: 'error', content: `session create failed: ${err.message}` }));
             break;
