@@ -41,12 +41,13 @@ nx-ce query "用中文回答：1+1=？" --model claude-haiku-4-5
 # Start WebSocket server (persistent, multi-session)
 nx-ce serve --port 3100
 
-# In another terminal, connect via WebSocket (see test/serve-test.mjs)
+# In another terminal, run tests
+node test/serve-test.mjs
 ```
 
 ---
 
-## `nx-ce query` — One-shot Cold-Start Query / 一次性冷启动查询
+## `nx-ce query` — One-Shot Cold-Start Query / 一次性冷启动查询
 
 ```bash
 nx-ce query "解释这段代码" --model claude-sonnet-4-6
@@ -80,9 +81,9 @@ nx-ce query "Analyze" --skill all
 
 ## `nx-ce serve` — WebSocket Multi-Session Server / WebSocket 多会话服务器
 
-**Single process. Multiple concurrent sessions. FIFO queries per session.**
+**Single process. Multiple concurrent sessions. Each session has its own cwd.**
 
-单例进程。多会话隔离。每个会话独立 SDK agentQuery，互不阻塞。
+单例进程。多会话隔离。每个会话可指定自己的工作目录。
 
 ```bash
 nx-ce serve                     # default port 3100
@@ -96,7 +97,7 @@ nx-ce serve --name "main" --port 3100 --cwd "D:/project"
 | `--port <port>` | WebSocket port (default `3100`) / 端口 |
 | `--model <id>` | Model override / 模型 ID |
 | `--claude-path <path>` | Path to Claude CLI / CLI 路径 |
-| `--cwd <path>` | Working directory / 工作目录 |
+| `--cwd <path>` | Default working directory / 默认工作目录 |
 | `--env "KEY=val,..."` | Extra env vars / 额外环境变量 |
 
 > WebSocket address: `ws://127.0.0.1:3100` (localhost only)
@@ -105,7 +106,58 @@ nx-ce serve --name "main" --port 3100 --cwd "D:/project"
 
 ```bash
 nx-ce serve --port 3100      # first → OK
-nx-ce serve --port 3100      # second → Port 3100 already in use — another nx-ce serve is running
+nx-ce serve --port 3100      # second → Port already in use — another instance is running
+```
+
+---
+
+## Multi-Session / 多会话管理
+
+### Auto-create on first query / 首次 query 自动创建
+
+Session 是**隐式创建**的。第一次发 `query` 时自动创建 SDK 会话，之后同名的 query 续接上下文：
+
+```javascript
+// 新会话 "proj-a"，工作目录 D:/project-a
+→ { "type": "query", "session": "proj-a", "cwd": "D:/project-a", "prompt": "分析目录结构" }
+
+// 新会话 "proj-b"，工作目录 D:/project-b（不同的 session 名 = 不同的 agentQuery）
+→ { "type": "query", "session": "proj-b", "cwd": "D:/project-b", "prompt": "分析目录结构" }
+
+// 同一 session 名 + 不同 cwd → 也是独立的 agentQuery
+→ { "type": "query", "session": "proj-a", "cwd": "D:/project-a/src", "prompt": "分析 src" }
+```
+
+内部标识 key 格式为 `{name}:{cwd}`：
+
+```
+proj-a:D~project-a       → SDK 会话 A
+proj-b:D~project-b       → SDK 会话 B
+proj-a:D~project-a~src   → SDK 会话 C
+```
+
+### Close session / 关闭会话
+
+```javascript
+// 关闭精确会话（指定 cwd）
+→ { "type": "closeSession", "session": "proj-a", "cwd": "D:/project-a" }
+
+// 关闭该 name 下所有 cwd 变体
+→ { "type": "closeSession", "session": "proj-a" }
+```
+
+### Idle auto-reclaim / 空闲自动回收
+
+客户端断开连接 5 分钟后，session 自动销毁并清理状态文件。
+
+### List sessions / 查看会话
+
+```javascript
+→ { "type": "listSessions" }
+← { "type": "session_list", "sessions": [
+    { "name": "proj-a", "cwd": "D:/project-a", "sessionId": "sess_xxx", "processing": false },
+    { "name": "proj-b", "cwd": "D:/project-b", "sessionId": "sess_yyy", "processing": true }
+  ]}
 ```
 
 ---
@@ -118,21 +170,22 @@ Server: `ws://127.0.0.1:PORT`. All messages are JSON (no length prefix).
 
 | type | Fields / 字段 | Description / 说明 |
 |------|---------------|-------------------|
-| `query` | `prompt: string`, `session?: string`, `id?: string` | Submit a query / 发起查询 |
+| `query` | `prompt: string`, `session?: string`, `cwd?: string`, `id?: string` | Submit a query / 发起查询 |
 | `ping` | — | Heartbeat / 心跳 |
-| `getSkills` | `session?: string` | Fetch skills/tools/agents / 拉取元数据 |
-| `getStatus` | `session?: string` | Query session status / 查询状态 |
-| `closeSession` | `session: string` | Close a session / 关闭会话 |
+| `getSkills` | `session?: string`, `cwd?: string` | Fetch skills/tools/agents / 拉取元数据 |
+| `getStatus` | `session?: string`, `cwd?: string` | Query session status / 查询状态 |
+| `closeSession` | `session: string`, `cwd?: string` | Close session(s) / 关闭会话 |
 | `listSessions` | — | List all active sessions / 列出会话 |
 
-`session` defaults to `"default"` if omitted.
+`session` defaults to `"default"`.
 
 ```json
-→ { "type": "query",   "session": "tab-1", "prompt": "分析这个目录" }
+→ { "type": "query",        "session": "proj-a", "cwd": "D:/project-a", "prompt": "分析" }
 → { "type": "ping" }
-→ { "type": "getSkills",         "session": "tab-1" }
-→ { "type": "getStatus",         "session": "tab-1" }
-→ { "type": "closeSession",      "session": "tab-1" }
+→ { "type": "getSkills",    "session": "proj-a" }
+→ { "type": "getStatus",    "session": "proj-a", "cwd": "D:/project-a" }
+→ { "type": "closeSession", "session": "proj-a", "cwd": "D:/project-a" }
+→ { "type": "closeSession", "session": "proj-a" }
 → { "type": "listSessions" }
 ```
 
@@ -142,7 +195,7 @@ Server: `ws://127.0.0.1:PORT`. All messages are JSON (no length prefix).
 
 ```json
 ← { "type": "connected", "port": 3100, "host": "MY-PC",
-    "machineId": "744e51b9-ad7d-85bb-1600-bbfb", "serverTime": 1780736149028 }
+    "machineId": "744e51b9-...", "serverTime": 1780736149028 }
 ```
 
 **Session init (auto-push on first query per session) / 会话初始化（自动推送）:**
@@ -161,7 +214,7 @@ Server: `ws://127.0.0.1:PORT`. All messages are JSON (no length prefix).
 ← { "type": "turn_start", "turn": "turn_xxx", "time": ... }
 ← { "type": "text",     "content": "这是一段回复...", "time": ... }
 ← { "type": "thinking", "content": "模型思考过程...", "time": ... }
-← { "type": "tool_use", "name": "readFile", "input": {...}, "id": "toolu_xxx" }
+← { "type": "tool_use", "name": "readFile", "input": {...} }
 ← { "type": "done",     "sessionId": "sess_xxx", "time": ... }
 ```
 
@@ -170,19 +223,19 @@ Server: `ws://127.0.0.1:PORT`. All messages are JSON (no length prefix).
 ```json
 ← { "type": "pong",          "sessionId": "sess_xxx", "serverTime": ... }
 ← { "type": "skills",        "skills": [...], "tools": [...], ... }
-← { "type": "status",        "session": "tab-1", "sessionId": "sess_xxx", "isActive": true, "queueLength": 0, "processing": false }
-← { "type": "session_list",  "sessions": [{ "name": "tab-1", ... }, ...] }
-← { "type": "session_closed","session": "tab-1" }
+← { "type": "status",        "session": "proj-a", "cwd": "D:/project-a", "sessionId": "...", "isActive": true }
+← { "type": "session_list",  "sessions": [{ "name":"proj-a", "cwd":"D:/project-a", ... }, ...] }
+← { "type": "session_closed","session": "proj-a", "cwd": "D:/project-a" }
 ← { "type": "error",         "content": "error message" }
 ```
 
 ### Full exchange example / 完整示例
 
 ```
-→ { "type":"query", "session":"tab-1", "prompt":"Hello" }
+→ { "type":"query", "session":"proj-a", "cwd":"D:/project-a", "prompt":"Hello" }
 ← { "type":"turn_start", "turn":"turn_xxx", "time":... }
-← { "type":"text",      "content":"Hello! How can I help you today?" }
-← { "type":"done",      "sessionId":"sess_abc", "time":... }
+← { "type":"text",       "content":"Hello! How can I help?" }
+← { "type":"done",       "sessionId":"sess_abc", "time":... }
 
 → { "type":"ping" }
 ← { "type":"pong",       "sessionId":"sess_abc", "serverTime":... }
@@ -190,23 +243,28 @@ Server: `ws://127.0.0.1:PORT`. All messages are JSON (no length prefix).
 
 ---
 
-## Multi-Session Architecture / 多会话架构
+## Architecture / 架构
 
 ```
                         nx-ce serve (single Node.js process)
-  ┌───────────────────────────────────────────────────────────┐
+  ┌──────────────────────────────────────────────────────────┐
   │  WebSocket Server (127.0.0.1:3100)                       │
   │                                                           │
   │  SessionManager                                           │
   │  ┌─────────────────────────────────────────────────────┐  │
-  │  │  "tab-1": { agentQuery(), messageChannel, queue }   │  │
-  │  │  "tab-2": { agentQuery(), messageChannel, queue }   │  │
-  │  │  "tab-3": { agentQuery(), messageChannel, queue }   │  │
+  │  │  "proj-a:D~/project-a" → agentQuery(cwd: project-a) │  │
+  │  │  "proj-b:D~/project-b" → agentQuery(cwd: project-b) │  │
+  │  │  "proj-a:D~/other"    → agentQuery(cwd: other)     │  │
   │  └──────────────────────┬──────────────────────────────┘  │
   │              spawn each | (SDK manages CLI processes)     │
-  │         Claude CLI ─────┴──── Claude CLI ───── Claude CLI │
+  │    Claude CLI ──────────┴── Claude CLI ──── Claude CLI    │
   └───────────────────────────────────────────────────────────┘
 ```
+
+### Session identity / 会话标识
+
+Session key = `{name}:{cwd}`. Same name + different cwd = different SDK session.
+Each session has its own `agentQuery()`, `MessageChannel`, `MonotonicClock`, and state file.
 
 ### Concurrency guarantees / 竞态保护
 
@@ -214,24 +272,9 @@ Server: `ws://127.0.0.1:PORT`. All messages are JSON (no length prefix).
 |-------------|----------------|
 | Concurrent session creation | `_pendingCreates` Map deduplicates in-flight creation promises |
 | SDK response routing | Each session has independent `for await` loop, writes only to `session.client` |
-| State file overwrite | Per-session files (`{name}.json`) + write lock |
-| Message ordering | Per-session `MonotonicClock` ensures strict time ordering |
+| State file overwrite | Per-session files (`{name~cwd}.json`) |
+| Message ordering | Per-session `MonotonicClock` ensures strict ordering |
 | Client disconnect cleanup | Null client ref + clear queue + 5-min idle timeout auto-destroy |
-
----
-
-## `nx-ce status` — Instance Status / 查看实例状态
-
-```bash
-nx-ce status                  # List all instances
-nx-ce status --name chat-1    # Show specific instance
-```
-
-```json
-{ "name": "chat-1", "pid": 12345, "lifecycleState": "running",
-  "sessionId": "sess_abc", "model": "claude-sonnet-4-6",
-  "port": 3100, "host": "MY-PC" }
-```
 
 ---
 
@@ -252,18 +295,16 @@ nx-ce skills --cwd "D:/project"
 
 ## State Persistence / 状态持久化
 
-State files at `~/.nx-ce/instances/{name}.json`:
+State files at `~/.nx-ce/instances/{key}.json`. Key format: `{name}~{cwd}`.
 
 ```json
 {
-  "name": "chat-tab-1",
-  "pid": 12345,
-  "startedAt": "2026-06-06T10:30:00.000Z",
-  "updatedAt": "2026-06-06T11:00:00.000Z",
+  "name": "proj-a:D~/project-a",
   "sessionId": "sess_abc123",
   "model": "claude-sonnet-4-6",
+  "cwd": "D:/project-a",
   "host": "MY-PC",
-  "machineId": "a1b2c3d4-e5f6-...",
+  "machineId": "744e51b9-...",
   "lifecycleState": "running",
   "port": 3100,
   "usage": { "inputTokens": 1500, "outputTokens": 3200, ... }
@@ -276,21 +317,6 @@ State files at `~/.nx-ce/instances/{name}.json`:
 | `stopped` | Clean shutdown / 正常关闭 |
 | `crashed` | Unexpected exit / 异常退出 |
 | `resuming` | Session recovery in progress / 恢复中 |
-
----
-
-## Architecture / 架构
-
-```
-Chrome Extension / 浏览器扩展
-       ↕ WebSocket (ws://127.0.0.1:3100)
-nx-ce serve (Node.js)
-  ├─ SessionManager → agentQuery()
-  │                     ↕
-  │                  Claude CLI
-  │
-  └─ (Native Host via exec.Command → nx-ce query --resume)
-```
 
 ---
 
