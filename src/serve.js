@@ -238,12 +238,23 @@ class SessionManager {
             session.metadata = {
               type: 'init',
               sessionId: session.sessionId,
+              // === 核心元数据 ===
               model: message.model,
+              cwd: session.cwd,
+              // === 名称列表（SDK init 消息只给名字，description 需要 supportedCommands） ===
               skills: message.skills || [],
               tools: message.tools || [],
               slashCommands: message.slash_commands || [],
               agents: message.agents || [],
-              cwd: session.cwd,
+              // === 扩展字段（之前被丢弃） ===
+              claudeCodeVersion: message.claude_code_version,
+              permissionMode: message.permissionMode,
+              apiKeySource: message.apiKeySource,
+              mcpServers: message.mcp_servers || [],
+              plugins: message.plugins || [],
+              outputStyle: message.output_style,
+              betas: message.betas || [],
+              fastModeState: message.fast_mode_state,
               time: session.clock.next(),
             };
             this._safeWriteState(session);
@@ -531,26 +542,50 @@ export async function startServe(options) {
           }
 
           if (meta) {
-            // 统一返回 type='skills'，便于客户端按 type 路由
+            // 暴露 SDK init 消息的完整字段
+            //   注：skills/tools/slashCommands/agents 是名称数组（SDK init 限制）
+            //   若要 description/argumentHint，需用 SDK 的 supportedCommands() — 当前未暴露
             ws.send(JSON.stringify({
               type: 'skills',
               sessionId: meta.sessionId,
               model: meta.model,
+              cwd: meta.cwd,
+              // 名称列表
               skills: meta.skills || [],
               tools: meta.tools || [],
               slashCommands: meta.slashCommands || [],
               agents: meta.agents || [],
-              cwd: meta.cwd,
+              // 扩展字段（之前被丢弃）
+              claudeCodeVersion: meta.claudeCodeVersion,
+              permissionMode: meta.permissionMode,
+              apiKeySource: meta.apiKeySource,
+              mcpServers: meta.mcpServers || [],
+              plugins: meta.plugins || [],
+              outputStyle: meta.outputStyle,
+              betas: meta.betas || [],
+              fastModeState: meta.fastModeState,
+              note: 'skills/tools/agents are name-only; description requires SDK supportedCommands() (not exposed)',
             }));
           } else {
             // 无 init 元数据时：让客户端发一个 query 触发 init，或
             // 等下一个 session 启动后再次 getSkills
             ws.send(JSON.stringify({
               type: 'skills',
+              sessionId: null,
+              model: null,
+              cwd: null,
               skills: [],
               tools: [],
               slashCommands: [],
               agents: [],
+              claudeCodeVersion: null,
+              permissionMode: null,
+              apiKeySource: null,
+              mcpServers: [],
+              plugins: [],
+              outputStyle: null,
+              betas: [],
+              fastModeState: null,
               note: 'no session has been initialized yet — send a query first',
             }));
           }

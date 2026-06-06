@@ -191,11 +191,49 @@ Server: `ws://127.0.0.1:PORT`. All messages are JSON (no length prefix).
 
 ```json
 ← { "type": "init", "sessionId": "sess_xxx", "model": "claude-sonnet-4-6",
+    "cwd": "D:/project-a",
     "skills": ["browse", "code-review", ...],
     "tools": ["Read", "Edit", "Bash", ...],
     "slashCommands": ["code-review", "ship", ...],
-    "agents": ["Explore", "code-reviewer", ...] }
+    "agents": ["Explore", "code-reviewer", ...],
+    "claudeCodeVersion": "1.0.0",
+    "permissionMode": "bypassPermissions",
+    "apiKeySource": "env",
+    "mcpServers": [{ "name": "...", "status": "connected" }],
+    "plugins": [{ "name": "...", "path": "..." }],
+    "outputStyle": "default",
+    "betas": [],
+    "fastModeState": null }
 ```
+
+**`getSkills` response (按需查询) / `getSkills` 响应:**
+
+```json
+← { "type": "skills", "sessionId": "sess_xxx", "model": "claude-sonnet-4-6",
+    "cwd": "D:/project-a",
+    "skills": ["browse", "code-review", ...],
+    "tools": ["Read", "Edit", "Bash", ...],
+    "slashCommands": ["code-review", "ship", ...],
+    "agents": ["Explore", "code-reviewer", ...],
+    "claudeCodeVersion": "1.0.0",
+    "permissionMode": "bypassPermissions",
+    "apiKeySource": "env",
+    "mcpServers": [...], "plugins": [...], "outputStyle": "...",
+    "betas": [...], "fastModeState": null,
+    "note": "skills/tools/agents are name-only; description requires SDK supportedCommands() (not exposed)" }
+```
+
+| 字段 | 类型 | 来源 |
+|------|------|------|
+| `skills` / `tools` / `slashCommands` / `agents` | `string[]` | SDK init 消息（仅名称，**无 description**） |
+| `mcpServers` | `[{name, status}]` | SDK init 消息（连接状态） |
+| `plugins` | `[{name, path}]` | SDK init 消息 |
+| `claudeCodeVersion` | `string` | SDK init 消息 |
+| `permissionMode` | `string` | SDK init 消息（`bypassPermissions` 等） |
+| `apiKeySource` | `string` | SDK init 消息（`env` / `keychain` 等） |
+| `outputStyle` | `string` | SDK init 消息（`default` 等） |
+| `betas` | `string[]` | SDK init 消息（beta 特性） |
+| `fastModeState` | `object \| null` | SDK init 消息（快速模式状态） |
 
 **Query response (streamed chunks) / 查询响应（流式块）:**
 
@@ -211,12 +249,13 @@ Server: `ws://127.0.0.1:PORT`. All messages are JSON (no length prefix).
 
 ```json
 ← { "type": "pong",          "sessionId": "sess_xxx", "serverTime": ... }
-← { "type": "skills",        "skills": [...], "tools": [...], ... }
 ← { "type": "status",        "session": "proj-a", "cwd": "D:/project-a", "sessionId": "...", "isActive": true }
 ← { "type": "session_list",  "sessions": [{ "name":"proj-a", "cwd":"D:/project-a", ... }, ...] }
 ← { "type": "session_closed","session": "proj-a", "cwd": "D:/project-a" }
 ← { "type": "error",         "content": "error message" }
 ```
+
+> 完整 `skills` 响应见上方「`getSkills` response」小节。
 
 ### Full exchange example / 完整示例
 
