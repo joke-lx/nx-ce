@@ -5,6 +5,9 @@
  * 每个会话（session）拥有独立的 agentQuery()、MessageChannel 和状态文件，
  * 天然并行，互不阻塞。
  *
+ * 会话标识 = name:cwd（同一 name 不同 cwd 视为不同会话）。
+ * 客户端可通过 query 消息的 cwd 字段指定工作目录。
+ *
  * 竞态保护：
  *   - session 创建：pendingCreates Map 防止重复创建
  *   - client 绑定：SDK 回复只写 session.client，不走 broadcast
@@ -25,6 +28,31 @@ const DEFAULT_PORT = 3100;
 const SESSION_IDLE_TIMEOUT_MS = 300_000; // 5 分钟
 
 // =================================================================
+// 工具函数
+// =================================================================
+
+/**
+ * 生成 session 内部标识 key。
+ * 同一 name 不同 cwd 产生不同 key，各自独立 agentQuery。
+ *
+ * @param {string} name - 会话名称（来自客户端）
+ * @param {string} [cwd] - 工作目录
+ * @returns {string} 内部 key
+ */
+function sessionKey(name, cwd) {
+  if (cwd) return `${name}:${cwd}`;
+  return name;
+}
+
+/**
+ * 从 sessionKey 中提取原始 name（用于 closeSession 匹配）。
+ */
+function baseName(key) {
+  const idx = key.indexOf(':');
+  return idx === -1 ? key : key.slice(0, idx);
+}
+
+// =================================================================
 // SessionManager — 管理多个独立 SDK 会话
 // =================================================================
 
@@ -40,56 +68,58 @@ class SessionManager {
 
     /** 清理定时器 */
     this._idleTimers = new Map();
-
-    /** 会话状态文件写锁 */
-    this._writeLocks = new Map();
   }
 
   /**
    * 获取或创建一个 session。
-   * 如果另一个协程正在创建同名 session，则等待其完成。
+   * 以 (name, cwd) 为唯一标识。
+   * 如果另一个协程正在创建同 key session，则等待其完成。
    *
-   * @param {string} name - session 名称（每个客户端/标签页唯一）
+   * @param {string} name - 会话名称
+   * @param {string} [cwd] - 工作目录（可选，默认服务器级 cwd）
    * @returns {Promise<Session>}
    */
-  async getOrCreate(name) {
+  async getOrCreate(name, cwd) {
+    const key = sessionKey(name, cwd);
+
     // 已有活跃 session → 直接返回
-    const existing = this.sessions.get(name);
+    const existing = this.sessions.get(key);
     if (existing && !existing.closed) {
-      // 取消 idle 定时器（客户端回来了）
-      this._cancelIdleTimer(name);
+      this._cancelIdleTimer(key);
       return existing;
     }
 
     // 正在被另一个协程创建 → 等它
-    if (this._pendingCreates.has(name)) {
-      return this._pendingCreates.get(name);
+    if (this._pendingCreates.has(key)) {
+      return this._pendingCreates.get(key);
     }
 
     // 创建锁 + 创建
-    const promise = this._createSession(name);
-    this._pendingCreates.set(name, promise);
+    const promise = this._createSession(name, key, cwd);
+    this._pendingCreates.set(key, promise);
 
     try {
       return await promise;
     } finally {
-      this._pendingCreates.delete(name);
+      this._pendingCreates.delete(key);
     }
   }
 
   /**
    * 创建内部 session 结构。
-   * 注意：JS 是单线程 event loop，此函数不会被并发调用（pendingCreates 保证）。
    */
-  async _createSession(name) {
-    const { claudePath, model, cwd, env } = this.serverOptions;
+  async _createSession(name, key, cwd) {
+    const { claudePath, model, env } = this.serverOptions;
 
-    // 检查是否有可恢复的会话状态
-    const existingState = readState(name);
+    // session 用自己的 cwd（优先客户端传入，fallback 到服务器级）
+    const actualCwd = cwd || this.serverOptions.cwd || process.cwd();
+
+    // 检查是否有可恢复的会话状态（按 key 存储，实现不同目录独立状态）
+    const existingState = readState(key);
 
     // 组装 SDK 选项
     const sdkOptions = {
-      cwd: cwd || process.cwd(),
+      cwd: actualCwd,
       model: model || 'claude-sonnet-4-6',
       pathToClaudeCodeExecutable: claudePath,
       permissionMode: 'bypassPermissions',
@@ -140,9 +170,10 @@ class SessionManager {
     // 启动 SDK 持久化查询
     const response = agentQuery({ prompt: messageChannel, options: sdkOptions });
 
-    /** @type {Session} */
     const session = {
-      name,
+      key,              // 内部标识：name:cwd
+      name,             // 客户端名称
+      cwd: actualCwd,   // session 自己的工作目录
       messageChannel,
       enqueueMessage,
       onTurnComplete,
@@ -161,22 +192,19 @@ class SessionManager {
       existingState,
 
       // 客户端状态
-      client: null,        // 当前绑定的 WebSocket 客户端
-      queue: [],           // 待处理查询 FIFO
-      turnActive: false,   // SDK 是否正在处理
+      client: null,
+      queue: [],
       currentTurnId: null,
       processing: false,
 
       // 元数据
       sessionId: existingState?.sessionId || null,
-      metadata: null,       // init 消息中的 skills/tools 等
+      metadata: null,
       clock: new MonotonicClock(),
       closed: false,
 
-      // 消费 Promise（用于等待关闭）
       consumerPromise: null,
 
-      // usage 追踪
       usage: existingState?.usage || {
         inputTokens: 0,
         outputTokens: 0,
@@ -190,9 +218,9 @@ class SessionManager {
     // 后台消费 SDK 输出
     session.consumerPromise = this._startConsumer(session);
 
-    this.sessions.set(name, session);
+    this.sessions.set(key, session);
 
-    // 持久化初始状态
+    // 持久化初始状态（使用 key 做文件名，不同 cwd 独立文件）
     this._safeWriteState(session);
 
     return session;
@@ -200,13 +228,11 @@ class SessionManager {
 
   /**
    * 后台消费循环 — 每个 session 独立。
-   * SDK 回复只会写入 session.client（绑定的 WS 客户端）。
    */
   _startConsumer(session) {
     return (async () => {
       try {
         for await (const message of session.response) {
-          // init 消息 → 捕获元数据
           if (message.type === 'system' && message.subtype === 'init') {
             session.sessionId = message.session_id;
             session.metadata = {
@@ -217,15 +243,13 @@ class SessionManager {
               tools: message.tools || [],
               slashCommands: message.slash_commands || [],
               agents: message.agents || [],
+              cwd: session.cwd,
               time: session.clock.next(),
             };
             this._safeWriteState(session);
-
-            // 推给当前绑定的客户端
             this._send(session.client, session.metadata);
           }
 
-          // 助手消息 → 分块转发
           if (message.type === 'assistant' && message.message?.content) {
             const content = message.message.content;
             if (typeof content === 'string') {
@@ -243,11 +267,9 @@ class SessionManager {
             }
           }
 
-          // result → 回合结束
           if (message.type === 'result') {
             this._send(session.client, { type: 'done', sessionId: session.sessionId, time: session.clock.next() });
 
-            // usage 累积
             if (message.usage) {
               const u = message.usage;
               session.usage = {
@@ -261,11 +283,10 @@ class SessionManager {
             }
 
             session.onTurnComplete();
-            session.client = null;     // 解绑客户端，允许下一个 query 绑定
+            session.client = null;
             session.processing = false;
             this._safeWriteState(session);
 
-            // 异步处理队列中的下一个请求
             setImmediate(() => this._processQueue(session));
           }
         }
@@ -304,44 +325,38 @@ class SessionManager {
     session.enqueueMessage(sdkMessage);
   }
 
-  /** 向一个 WS 客户端发 JSON（安全断开则跳过） */
+  /** 向一个 WS 客户端发 JSON */
   _send(client, data) {
     if (client && client.readyState === 1) {
       client.send(JSON.stringify(data));
     }
   }
 
-  /** 持久化 session 状态（写锁防止同名并发写） */
+  /** 持久化 session 状态（按 key 为文件名） */
   _safeWriteState(session) {
-    const name = session.name;
-    // JS 单线程，用简单 flag 防同一 session 的递归写
-    writeState(name, createState(name, {
+    writeState(session.key, createState(session.key, {
       sessionId: session.sessionId,
       model: session.sdkOptions.model,
+      cwd: session.cwd,
       usage: session.usage,
     }));
   }
 
-  /** 取消 idle 定时器 */
-  _cancelIdleTimer(name) {
-    const timer = this._idleTimers.get(name);
+  _cancelIdleTimer(key) {
+    const timer = this._idleTimers.get(key);
     if (timer) {
       clearTimeout(timer);
-      this._idleTimers.delete(name);
+      this._idleTimers.delete(key);
     }
   }
 
-  /** 安排 idle 关闭 */
-  _scheduleIdleCleanup(name) {
-    this._cancelIdleTimer(name);
-    this._idleTimers.set(name, setTimeout(() => {
-      this.destroy(name, 'idle timeout');
+  _scheduleIdleCleanup(key) {
+    this._cancelIdleTimer(key);
+    this._idleTimers.set(key, setTimeout(() => {
+      this.destroy(key, 'idle timeout');
     }, SESSION_IDLE_TIMEOUT_MS));
   }
 
-  /**
-   * 从 session 队列中移除指定客户端的所有待处理请求。
-   */
   removeClientFromQueue(session, ws) {
     if (!session || session.closed) return;
     session.queue = session.queue.filter(item => item.client !== ws);
@@ -349,40 +364,41 @@ class SessionManager {
 
   /**
    * 销毁一个 session。
+   * @param {string} key - 内部 key（name:cwd）
    */
-  async destroy(name, reason = 'shutdown') {
-    const session = this.sessions.get(name);
+  async destroy(key, reason = 'shutdown') {
+    const session = this.sessions.get(key);
     if (!session || session.closed) return;
     session.closed = true;
-    this._cancelIdleTimer(name);
+    this._cancelIdleTimer(key);
 
-    // 关闭 MessageChannel → SDK next() 返回 done
     session.closeChannel();
 
-    // 中断 SDK 查询
-    try {
-      await session.response.interrupt();
-    } catch { /* ignore */ }
+    try { await session.response.interrupt(); } catch { /* ignore */ }
+    try { await session.consumerPromise; } catch { /* ignore */ }
 
-    // 等待消费循环结束
-    try {
-      await session.consumerPromise;
-    } catch { /* ignore */ }
+    this.sessions.delete(key);
 
-    this.sessions.delete(name);
-
-    // 如果是正常关闭才清理状态文件（crash 留文件便于恢复）
     if (reason !== 'crash') {
-      deleteState(name);
+      deleteState(key);
     }
+  }
+
+  /**
+   * 按客户端 name 销毁匹配的所有 session（包括不同 cwd）。
+   * @param {string} name - 客户端传入的 session 名称
+   */
+  async destroyByName(name) {
+    const keys = [...this.sessions.keys()].filter(k => baseName(k) === name);
+    await Promise.allSettled(keys.map(k => this.destroy(k, 'client request')));
   }
 
   /**
    * 销毁所有 session。
    */
   async destroyAll(reason = 'shutdown') {
-    const names = [...this.sessions.keys()];
-    await Promise.allSettled(names.map(name => this.destroy(name, reason)));
+    const keys = [...this.sessions.keys()];
+    await Promise.allSettled(keys.map(k => this.destroy(k, reason)));
   }
 }
 
@@ -400,11 +416,10 @@ export async function startServe(options) {
   const host = hostname();
   const osInfo = `${platform()}/${release()}/${machine()}`;
 
-  // 服务器级别状态
   const serverState = readState(name);
   const serverSessionId = serverState?.sessionId || null;
 
-  // 创建 SessionManager
+  // 创建 SessionManager（cwd 为服务器级默认，session 可覆盖）
   const sessionManager = new SessionManager({ claudePath, model, cwd, env });
 
   // =================================================================
@@ -413,7 +428,6 @@ export async function startServe(options) {
 
   const wss = new WebSocketServer({ port, host: '127.0.0.1' });
 
-  // 等待服务器就绪
   await new Promise((resolve, reject) => {
     wss.once('listening', resolve);
     wss.once('error', (err) => {
@@ -424,7 +438,6 @@ export async function startServe(options) {
     });
   });
 
-  // 写入服务器级状态
   writeState(name, {
     name,
     pid: process.pid,
@@ -438,7 +451,6 @@ export async function startServe(options) {
 
   // 客户端连接处理
   wss.on('connection', (ws) => {
-    // 初始连接消息
     ws.send(JSON.stringify({
       type: 'connected',
       port,
@@ -465,16 +477,16 @@ export async function startServe(options) {
             break;
           }
 
-          // 获取或创建 session（创建锁保证并发安全）
+          // 支持每个 query 指定自己的工作目录
+          // 同一 session name + 不同 cwd = 不同 SDK 会话
           let session;
           try {
-            session = await sessionManager.getOrCreate(sessionName);
+            session = await sessionManager.getOrCreate(sessionName, req.cwd);
           } catch (err) {
             ws.send(JSON.stringify({ type: 'error', content: `session create failed: ${err.message}` }));
             break;
           }
 
-          // 入队
           session.queue.push({ client: ws, prompt: req.prompt, id: req.id });
           sessionManager._processQueue(session);
           break;
@@ -485,7 +497,9 @@ export async function startServe(options) {
           break;
 
         case 'getSkills': {
-          const session = sessionManager.sessions.get(sessionName);
+          // 按 (name, cwd) 查 session
+          const key = sessionKey(sessionName, req.cwd);
+          const session = sessionManager.sessions.get(key);
           if (session?.metadata) {
             ws.send(JSON.stringify(session.metadata));
           } else {
@@ -502,10 +516,12 @@ export async function startServe(options) {
         }
 
         case 'getStatus': {
-          const session = sessionManager.sessions.get(sessionName);
+          const key = sessionKey(sessionName, req.cwd);
+          const session = sessionManager.sessions.get(key);
           ws.send(JSON.stringify({
             type: 'status',
             session: sessionName,
+            cwd: req.cwd || cwd || process.cwd(),
             sessionId: session?.sessionId || null,
             isActive: session ? !session.closed : false,
             queueLength: session?.queue?.length || 0,
@@ -515,16 +531,26 @@ export async function startServe(options) {
         }
 
         case 'closeSession': {
-          await sessionManager.destroy(sessionName, 'client request');
-          ws.send(JSON.stringify({ type: 'session_closed', session: sessionName }));
+          if (req.cwd) {
+            // 精确关闭：name + cwd
+            const key = sessionKey(sessionName, req.cwd);
+            await sessionManager.destroy(key, 'client request');
+            ws.send(JSON.stringify({ type: 'session_closed', session: sessionName, cwd: req.cwd }));
+          } else {
+            // 关闭该 name 下所有 cwd 变体
+            await sessionManager.destroyByName(sessionName);
+            ws.send(JSON.stringify({ type: 'session_closed', session: sessionName }));
+          }
           break;
         }
 
         case 'listSessions': {
           const sessions = [...sessionManager.sessions.entries()]
             .filter(([_, s]) => !s.closed)
-            .map(([name, s]) => ({
-              name,
+            .map(([key, s]) => ({
+              name: s.name,
+              key,
+              cwd: s.cwd,
               sessionId: s.sessionId,
               queueLength: s.queue.length,
               processing: s.processing,
@@ -540,15 +566,14 @@ export async function startServe(options) {
 
     // 客户端断开 → 清理引用
     ws.on('close', () => {
-      for (const [sName, session] of sessionManager.sessions) {
+      for (const [sKey, session] of sessionManager.sessions) {
         if (session.client === ws) {
           session.client = null;
         }
         sessionManager.removeClientFromQueue(session, ws);
 
-        // 如果没有客户端了，安排 idle 回收
         if (session.client === null && session.queue.length === 0 && !session.closed) {
-          sessionManager._scheduleIdleCleanup(sName);
+          sessionManager._scheduleIdleCleanup(sKey);
         }
       }
     });
@@ -559,13 +584,11 @@ export async function startServe(options) {
   // =================================================================
 
   async function shutdown() {
-    // 更新服务器状态
     writeState(name, {
       ...readState(name),
       lifecycleState: LifecycleState.STOPPED,
     });
 
-    // 通知所有 WS 客户端
     wss.clients.forEach((client) => {
       if (client.readyState === 1) {
         client.close(1001, 'server shutting down');
@@ -573,10 +596,7 @@ export async function startServe(options) {
     });
     wss.close();
 
-    // 关闭所有 session
     await sessionManager.destroyAll('shutdown');
-
-    // 删除服务端状态文件
     deleteState(name);
 
     process.exit(0);
@@ -584,10 +604,6 @@ export async function startServe(options) {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
-
-  // =================================================================
-  // 返回
-  // =================================================================
 
   const info = { port, name };
   console.error(`nx-ce serve ws://127.0.0.1:${port} [${name}]`);

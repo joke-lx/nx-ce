@@ -132,11 +132,13 @@ export function listStates() {
 
 /**
  * 将实例名称清理为安全的文件名。
- * 移除非字母数字的字符，替换为下划线。
+ * 保留字母、数字、点、下划线、连字符、冒号（转为 ~）。
+ * 冒号转为 ~ 是为了支持 "name:cwd" 格式的内部 key。
  *
  * @param {string} name - 原始实例名称
  * @returns {string} 安全的文件名（带 .json 后缀）
  */
 function sanitize(name) {
-  return `${String(name).replace(/[^a-zA-Z0-9._-]/g, '_')}.json`;
+  const safe = String(name).replace(/[^a-zA-Z0-9._~-]/g, '_').replace(/:/g, '~');
+  return `${safe}.json`;
 }
