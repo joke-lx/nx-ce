@@ -32,6 +32,9 @@ export function parseArgs(argv = process.argv.slice(2)) {
       if (eqIdx !== -1) {
         // --key=value 格式
         flags[arg.slice(2, eqIdx)] = arg.slice(eqIdx + 1);
+      } else if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) {
+        // --key 后面没有值，或下一个参数也是 flag → boolean flag
+        flags[arg.slice(2)] = true;
       } else {
         // --key value 格式（下一个参数作为值）
         flags[arg.slice(2)] = rest[++i] ?? true;
@@ -71,7 +74,11 @@ export async function runCli() {
         env: flags.env ? parseEnvString(flags.env) : undefined,
       });
 
-      return result;
+      // 默认只返回 text + sessionId，加 --include-metadata 才返回 metadata
+      if (flags['include-metadata']) {
+        return result;
+      }
+      return { text: result.text, sessionId: result.sessionId };
     }
 
     case 'serve': {
@@ -111,6 +118,7 @@ export async function runCli() {
     --system-prompt <text>        系统提示词覆盖
     --resume <sessionId>          续接之前的会话（长对话）
     --skill <name>[,<name>...]    加载指定 Skill（逗号分隔，传 "all" 加载全部）
+    --include-metadata            输出中附带 skills/tools/slash_commands 列表
     --no-persist                  不持久化会话
     --env "KEY=value,KEY2=val"    额外环境变量
 

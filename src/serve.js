@@ -11,6 +11,8 @@
  *   ← { "id":"...", "type":"error", "content":"..." }
  *   → { "type":"ping" }
  *   ← { "type":"pong", "sessionId":"..." }
+ *   → { "type":"getSkills" }
+ *   ← { "type":"skills", "skills":[...], "tools":[...], ... }
  */
 
 import { query as agentQuery } from '@anthropic-ai/claude-agent-sdk';
@@ -102,6 +104,8 @@ export async function startServe(options) {
   });
 
   let currentSessionId = existingState?.sessionId || null;
+  // 缓存 session 元数据，供 getSkills 按需查询
+  let sessionMetadata = null;
 
   // 持久化初始状态
   writeState(name, {
@@ -116,7 +120,7 @@ export async function startServe(options) {
   const consumerPromise = (async () => {
     try {
       for await (const message of response) {
-        // 捕获初始化消息中的会话 ID，更新持久化状态
+        // 捕获初始化消息中的会话 ID + 元数据，更新持久化状态
         if (message.type === 'system' && message.subtype === 'init' && message.session_id) {
           currentSessionId = message.session_id;
           writeState(name, {
@@ -126,6 +130,17 @@ export async function startServe(options) {
             sessionId: currentSessionId,
             model: sdkOptions.model,
           });
+          // 将技能/工具/命令列表转发给客户端 + 缓存供 getSkills 查询
+          sessionMetadata = {
+            type: 'init',
+            sessionId: currentSessionId,
+            model: message.model,
+            skills: message.skills || [],
+            tools: message.tools || [],
+            slashCommands: message.slash_commands || [],
+            agents: message.agents || [],
+          };
+          writeMessage(process.stdout, sessionMetadata);
         }
 
         // 助手消息 → 区分为 text / tool_use / thinking 块写入 stdout
@@ -199,6 +214,16 @@ export async function startServe(options) {
       } else if (req.type === 'ping') {
         // ping/pong 心跳
         writeMessage(process.stdout, { type: 'pong', sessionId: currentSessionId });
+      } else if (req.type === 'getSkills') {
+        // Go 端主动拉取 skill/工具/命令 列表（可重复查询）
+        writeMessage(process.stdout, sessionMetadata || {
+          type: 'skills',
+          skills: [],
+          tools: [],
+          slashCommands: [],
+          agents: [],
+          note: 'session not yet initialized',
+        });
       }
     }
   } finally {

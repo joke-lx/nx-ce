@@ -1,5 +1,8 @@
 # nx-ce — Claude Engine
 
+[![npm version](https://img.shields.io/npm/v/nx-ce)](https://www.npmjs.com/package/nx-ce)
+[![CI](https://github.com/joke-lx/nx-ce/actions/workflows/npm-publish.yml/badge.svg)](https://github.com/joke-lx/nx-ce/actions/workflows/npm-publish.yml)
+
 **nx-ce** 是一个轻量级 Node.js 适配器，封装了 `@anthropic-ai/claude-agent-sdk`。
 通过长度前缀的 JSON 协议（与 Chrome Native Messaging 格式一致）在 stdin/stdout 上暴露 SDK 接口，
 支持一次性冷启动查询与持久化服务两种运行模式。
@@ -48,6 +51,7 @@ nx-ce query "Analyze" --skill all
 | `--system-prompt <text>` | 系统提示词覆盖 / System prompt override |
 | `--resume <sessionId>` | 续接之前的会话（长对话）/ Resume a prior session |
 | `--skill <name>[,<name>...]` | 加载指定 Skill（逗号分隔，传 `all` 加载全部）/ Load specific skills |
+| `--include-metadata` | 输出中附带 skills/tools/slash_commands 信息 / Include skill/tool metadata in output |
 | `--no-persist` | 不持久化会话 / Don't persist session |
 | `--env "KEY=value,KEY2=val"` | 额外环境变量 / Extra environment variables |
 
@@ -98,6 +102,10 @@ All IPC uses the same wire format as Chrome native messaging:
 ```
 → { "prompt": "...", "model": "...", "systemPrompt": "..." }
 ← { "text": "...", "sessionId": "sess_xxx" }
+
+# 加 --include-metadata 时返回 metadata
+# With --include-metadata, response includes metadata:
+← { "text": "...", "sessionId": "sess_xxx", "metadata": { "skills": [...], "tools": [...], "slashCommands": [...] } }
 ```
 
 ### 服务（持久化）/ Serve (persistent)
@@ -111,6 +119,12 @@ All IPC uses the same wire format as Chrome native messaging:
 
 → { "type":"ping" }
 ← { "type":"pong", "sessionId":"..." }
+
+→ { "type":"getSkills" }
+← { "type":"skills", "skills":["browse",...], "tools":["Read",...], "slashCommands":[...], "agents":[...] }
+
+(首次 init 自动推送)
+← { "type":"init", "skills":[...], "tools":[...], ... }
 ```
 
 协议消息类型 / Message types:
@@ -125,6 +139,8 @@ All IPC uses the same wire format as Chrome native messaging:
 | ← | `error` | 错误消息 / Error message |
 | → | `ping` | 心跳检测 / Heartbeat |
 | ← | `pong` | 心跳回复 / Heartbeat response |
+| → | `getSkills` | Go 端按需拉取技能/工具列表 / Fetch skills/tools list |
+| ← | `init` / `skills` | 技能列表回复 / Skills metadata response |
 
 ---
 

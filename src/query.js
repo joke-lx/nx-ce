@@ -22,7 +22,7 @@ import { query as agentQuery } from '@anthropic-ai/claude-agent-sdk';
  * @param {string} [options.resumeSessionId] - 恢复之前的会话
  * @param {string[]|'all'} [options.skills] - 加载哪些 Skill（数组或 'all'）
  * @param {AbortController} [options.signal] - 中止信号
- * @returns {Promise<{ text: string, sessionId: string | null }>}
+ * @returns {Promise<{ text: string, sessionId: string | null, metadata: object | null }>}
  */
 export async function runQuery(options) {
   const {
@@ -86,6 +86,7 @@ export async function runQuery(options) {
 
   let text = '';
   let sessionId = null;
+  let metadata = null;
 
   // 遍历 SDK 返回的流式消息
   for await (const message of response) {
@@ -95,9 +96,16 @@ export async function runQuery(options) {
       break;
     }
 
-    // 从初始化消息中捕获会话 ID
-    if (message.type === 'system' && message.subtype === 'init' && message.session_id) {
+    // 从 init 消息中捕获 sessionId + 技能/工具/命令 元数据
+    if (message.type === 'system' && message.subtype === 'init') {
       sessionId = message.session_id;
+      metadata = {
+        model: message.model,
+        skills: message.skills || [],
+        tools: message.tools || [],
+        slashCommands: message.slash_commands || [],
+        agents: message.agents || [],
+      };
     }
 
     // 提取助手的文本回复内容
@@ -116,5 +124,5 @@ export async function runQuery(options) {
     }
   }
 
-  return { text, sessionId };
+  return { text, sessionId, metadata };
 }
