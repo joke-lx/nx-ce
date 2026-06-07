@@ -153,6 +153,7 @@ export class SessionManager {
       messageChannel,
       enqueueMessage,
       onTurnComplete,
+      metadataPromise,  // 供 getSkills probe 等待 init 完成
       channelClosed: false,
       closeChannel() {
         channelClosed = true;
@@ -190,6 +191,9 @@ export class SessionManager {
         contextTokens: 0,
       },
     };
+
+    // metadata 就绪 Promise（供 getSkills probe 等待 init 完成）
+    session.metadataPromise = new Promise((resolve) => { session._resolveMetadata = resolve; });
 
     // 后台消费 SDK 输出
     session.consumerPromise = this._startConsumer(session);
@@ -235,6 +239,11 @@ export class SessionManager {
             };
             this._safeWriteState(session);
             this._send(session.client, session.metadata);
+            // resolve metadataPromise（如果有 probe 在等）
+            if (session._resolveMetadata) {
+              session._resolveMetadata(session.metadata);
+              session._resolveMetadata = null;
+            }
           }
 
           if (message.type === 'assistant' && message.message?.content) {

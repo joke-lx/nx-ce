@@ -121,7 +121,7 @@ export async function startServe(options) {
         case 'getSkills': {
           // 解析目标 session
           //   带 session/cwd → 取该 session 的元数据
-          //   不带 → 取任意已 init 的 session 的元数据（server 级）
+          //   不带 → 取任意已 init 的 session 的元数据；没有时自动创建一个 probe
           let meta = null;
           if (req.session || req.cwd) {
             const key = `${sessionName}:${req.cwd}`;
@@ -131,6 +131,25 @@ export async function startServe(options) {
             // server 级：找任意一个已 init 的 session
             for (const s of sessionManager.sessions.values()) {
               if (s.metadata) { meta = s.metadata; break; }
+            }
+
+            // 没有任何已初始化的 session → 自动创建一个 probe session
+            if (!meta) {
+              try {
+                const probe = await sessionManager.getOrCreate('__probe__');
+                // 等 SDK init 消息把 metadata 填上
+                meta = await Promise.race([
+                  probe.metadataPromise,
+                  new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('probe timeout after 30s')), 30000)
+                  ),
+                ]);
+                // 取到后立即销毁 probe
+                await sessionManager.destroy('__probe__', 'probe complete', { keepHistory: false });
+              } catch (err) {
+                ws.send(JSON.stringify({ type: 'error', content: `probe session failed: ${err.message}` }));
+                break;
+              }
             }
           }
 
