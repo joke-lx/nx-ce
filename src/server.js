@@ -119,41 +119,33 @@ export async function startServe(options) {
           break;
 
         case 'getSkills': {
-          // 解析目标 session
-          //   带 session/cwd → 取该 session 的元数据
-          //   不带 → 取任意已 init 的 session 的元数据；没有时自动创建一个 probe
-          let meta = null;
-          if (req.session || req.cwd) {
-            const key = `${sessionName}:${req.cwd}`;
-            const session = sessionManager.sessions.get(key);
-            meta = session?.metadata;
-          } else {
-            // server 级：找任意一个已 init 的 session
-            for (const s of sessionManager.sessions.values()) {
-              if (s.metadata) { meta = s.metadata; break; }
-            }
+          // 每个会话独立获取自己的 skills/tools/MCP，不偷看别人的。
+          //   带了 session/cwd → 查/创建指定会话
+          //   没带 → 查/创建 __probe__
+          const targetName = req.session || '__probe__';
+          const targetCwd  = req.cwd || undefined;
 
-            // 没有任何已初始化的 session → 自动创建一个 probe session
+          try {
+            // 已有初始化好的 metadata → 直接返回
+            const key = `${targetName}:${targetCwd}`;
+            const existing = sessionManager.sessions.get(key);
+            let meta = existing?.metadata;
+
+            // 没有 → 创建 probe 会话，占位触发 init 等 metadata
             if (!meta) {
-              try {
-                const probe = await sessionManager.getOrCreate('__probe__');
-                // 等 SDK init 消息把 metadata 填上
-                meta = await Promise.race([
-                  probe.metadataPromise,
-                  new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('probe timeout after 30s')), 30000)
-                  ),
-                ]);
-                // 取到后立即销毁 probe
-                await sessionManager.destroy('__probe__', 'probe complete', { keepHistory: false });
-              } catch (err) {
-                ws.send(JSON.stringify({ type: 'error', content: `probe session failed: ${err.message}` }));
-                break;
-              }
+              const probe = await sessionManager.getOrCreate(targetName, targetCwd);
+              probe.queue.push({ client: null, prompt: 'ok', id: null });
+              sessionManager._processQueue(probe);
+              meta = await Promise.race([
+                probe.metadataPromise,
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error('probe timeout after 30s')), 30000)
+                ),
+              ]);
+              // 取到后立即销毁（不保留磁盘历史），下次真实 query 开全新会话
+              await sessionManager.destroy(key, 'probe complete', { keepHistory: false });
             }
-          }
 
-          if (meta) {
             ws.send(JSON.stringify({
               type: 'skills',
               sessionId: meta.sessionId,
@@ -173,26 +165,8 @@ export async function startServe(options) {
               fastModeState: meta.fastModeState,
               note: 'skills/tools/agents are name-only; description requires SDK supportedCommands() (not exposed)',
             }));
-          } else {
-            ws.send(JSON.stringify({
-              type: 'skills',
-              sessionId: null,
-              model: null,
-              cwd: null,
-              skills: [],
-              tools: [],
-              slashCommands: [],
-              agents: [],
-              claudeCodeVersion: null,
-              permissionMode: null,
-              apiKeySource: null,
-              mcpServers: [],
-              plugins: [],
-              outputStyle: null,
-              betas: [],
-              fastModeState: null,
-              note: 'no session has been initialized yet — send a query first',
-            }));
+          } catch (err) {
+            ws.send(JSON.stringify({ type: 'error', content: `getSkills failed: ${err.message}` }));
           }
           break;
         }
