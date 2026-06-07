@@ -83,7 +83,7 @@ export async function runCli() {
 用法:
   nx-ce serve                     WebSocket 持久化服务器（唯一入口）
     --name <name>                 实例名称（默认: "default"）
-    --port <port>                 WebSocket 端口（默认: 3100）
+    --port <port>                 WebSocket 端口（默认: 43720）
     --model <id>                  模型覆盖
     --claude-path <path>          Claude CLI 路径
     --cwd <path>                  默认工作目录

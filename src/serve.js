@@ -22,7 +22,7 @@ import { readState, writeState, deleteState, listStates, LifecycleState, createS
 import { generateId, MonotonicClock, getMachineId } from './util.js';
 
 /** 默认端口 */
-const DEFAULT_PORT = 3100;
+const DEFAULT_PORT = 43720;
 
 /** 空闲 session 超时（毫秒），超过此时间无客户端则自动关闭 */
 const SESSION_IDLE_TIMEOUT_MS = 300_000; // 5 分钟

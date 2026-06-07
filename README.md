@@ -36,7 +36,7 @@ npm install -g nx-ce
 
 ```bash
 # Start WebSocket server (the only mode)
-nx-ce serve --port 3100
+nx-ce serve --port 43720
 
 # In another terminal, run tests
 node test/serve-test.mjs
@@ -55,27 +55,27 @@ node test/serve-test.mjs
 单例进程。多会话隔离。每个会话可指定自己的工作目录。
 
 ```bash
-nx-ce serve                     # default port 3100
-nx-ce serve --port 3100
-nx-ce serve --name "main" --port 3100 --cwd "D:/project"
+nx-ce serve                     # default port 43720
+nx-ce serve --port 43720
+nx-ce serve --name "main" --port 43720 --cwd "D:/project"
 ```
 
 | Flag | Description / 说明 |
 |------|-------------------|
 | `--name <name>` | Instance name (default `default`) / 实例名称 |
-| `--port <port>` | WebSocket port (default `3100`) / 端口 |
+| `--port <port>` | WebSocket port (default `43720`) / 端口 |
 | `--model <id>` | Model override / 模型 ID |
 | `--claude-path <path>` | Path to Claude CLI / CLI 路径 |
 | `--cwd <path>` | Default working directory / 默认工作目录 |
 | `--env "KEY=val,..."` | Extra env vars / 额外环境变量 |
 
-> WebSocket address: `ws://127.0.0.1:3100` (localhost only)
+> WebSocket address: `ws://127.0.0.1:43720` (localhost only)
 
 ### Singleton guarantee / 单例保证
 
 ```bash
-nx-ce serve --port 3100      # first → OK
-nx-ce serve --port 3100      # second → Port already in use — another instance is running
+nx-ce serve --port 43720      # first → OK
+nx-ce serve --port 43720      # second → Port already in use — another instance is running
 ```
 
 ---
@@ -183,7 +183,7 @@ Server: `ws://127.0.0.1:PORT`. All messages are JSON (no length prefix).
 **Connection / 连接建立:**
 
 ```json
-← { "type": "connected", "port": 3100, "host": "MY-PC",
+← { "type": "connected", "port": 43720, "host": "MY-PC",
     "machineId": "744e51b9-...", "serverTime": 1780736149028 }
 ```
 
@@ -276,7 +276,7 @@ Server: `ws://127.0.0.1:PORT`. All messages are JSON (no length prefix).
 ```
                         nx-ce serve (single Node.js process)
   ┌──────────────────────────────────────────────────────────┐
-  │  WebSocket Server (127.0.0.1:3100)                       │
+  │  WebSocket Server (127.0.0.1:43720)                       │
   │                                                           │
   │  SessionManager                                           │
   │  ┌─────────────────────────────────────────────────────┐  │
@@ -319,7 +319,7 @@ State files at `~/.nx-ce/instances/{key}.json`. Key format: `{name}~{cwd}`.
   "host": "MY-PC",
   "machineId": "744e51b9-...",
   "lifecycleState": "running",
-  "port": 3100,
+  "port": 43720,
   "usage": { "inputTokens": 1500, "outputTokens": 3200, ... }
 }
 ```
@@ -337,7 +337,7 @@ State files at `~/.nx-ce/instances/{key}.json`. Key format: `{name}~{cwd}`.
 
 ```bash
 # Start server
-node ./bin/nx-ce.js serve --port 3100
+node ./bin/nx-ce.js serve --port 43720
 
 # Run tests (in another terminal)
 node test/serve-test.mjs
@@ -352,7 +352,7 @@ node -c src/*.js
 
 ```bash
 # Terminal 1: start server
-node bin/nx-ce.js serve --port 3100
+node bin/nx-ce.js serve --port 43720
 
 # Terminal 2: run tests
 node test/serve-test.mjs

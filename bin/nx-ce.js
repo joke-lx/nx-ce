@@ -6,7 +6,7 @@
  * Single entry point — all consumers (CLI / Chrome extension / native_host)
  * talk to the WebSocket server via the unified protocol.
  *
- *   nx-ce serve [--port 3100]   — start WebSocket server
+ *   nx-ce serve [--port 43720]  — start WebSocket server
  *   nx-ce status                — list instance states
  *   nx-ce help                  — show help
  */
