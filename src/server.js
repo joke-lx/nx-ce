@@ -181,14 +181,17 @@ export async function startServe(options) {
         case 'getStatus': {
           const key = `${sessionName}:${req.cwd || cwd || process.cwd()}`;
           const session = sessionManager.sessions.get(key);
+          const lifecycleState = session ? (session.closed ? 'stopped' : 'running') : 'stopped';
           ws.send(JSON.stringify({
             type: 'status',
             session: sessionName,
             cwd: req.cwd || cwd || process.cwd(),
             sessionId: session?.sessionId || null,
+            lifecycleState,
             isActive: session ? !session.closed : false,
             queueLength: session?.queue?.length || 0,
             processing: session?.processing || false,
+            model: session?.sdkOptions?.model || null,
           }));
           break;
         }
