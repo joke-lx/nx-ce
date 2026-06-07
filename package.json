@@ -1,6 +1,6 @@
 {
   "name": "nx-ce",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Claude Engine — WebSocket adapter for @anthropic-ai/claude-agent-sdk. Single serve mode serves all consumers (CLI / Chrome extension / native_host) over a unified JSON-over-WebSocket protocol.",
   "type": "module",
   "bin": {
