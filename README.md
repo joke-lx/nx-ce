@@ -132,7 +132,7 @@ nx-ce serve --name "main" --port 43720 --cwd "D:/project"
            │   ├─ store.js  ←  磁盘持久化
            │   └─ manager.js←  SessionManager
            ├─ server.js     ←  WebSocket 服务器
-           ├─ protocol/     ←  有线协议
+           ├─ protocol/     ←  wire protocol
            │   └─ native.js
            └─ util.js       ←  工具函数
 ```
