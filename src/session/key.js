@@ -22,12 +22,14 @@ export function sessionKey(name, cwd) {
 }
 
 /**
- * 从 sessionKey 中提取原始 name（用于 closeSession 匹配）。
+ * 从 sessionKey 中提取原始 name（用于 closeSession / 历史列表 name 恢复）。
  *
- * @param {string} key - 形如 "name:cwd" 的会话 key
+ * @param {string} key - 形如 "name:cwd" 或经 sanitize 后的 "name~cwd"
  * @returns {string} name 部分
  */
 export function baseName(key) {
-  const idx = key.indexOf(':');
+  // 优先找原始分隔符 ":"，再找 sanitize 后的 "~"
+  let idx = key.indexOf(':');
+  if (idx === -1) idx = key.indexOf('~');
   return idx === -1 ? key : key.slice(0, idx);
 }
