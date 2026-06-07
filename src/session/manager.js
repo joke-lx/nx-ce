@@ -153,7 +153,6 @@ export class SessionManager {
       messageChannel,
       enqueueMessage,
       onTurnComplete,
-      metadataPromise,  // 供 getSkills probe 等待 init 完成
       channelClosed: false,
       closeChannel() {
         channelClosed = true;
