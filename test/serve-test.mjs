@@ -2,13 +2,13 @@
  * nx-ce serve 集成测试
  *
  * 用法：
- *   终端1: node bin/nx-ce.js serve --port 3100
+ *   终端1: node bin/nx-ce.js serve --port 43720
  *   终端2: node test/serve-test.mjs
  */
 
 import WebSocket from 'ws';
 
-const PORT = 3100;
+const PORT = 43720;
 const URL = `ws://127.0.0.1:${PORT}`;
 
 let totalPassed = 0;

@@ -11,7 +11,7 @@
  *   nx-ce help                  — show help
  */
 
-import { runCli } from '../src/cli.js';
+import { runCli } from '../src/cli/commands.js';
 
 runCli()
   .then((result) => {

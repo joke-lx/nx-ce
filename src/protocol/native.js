@@ -9,7 +9,7 @@
 
 import { Buffer } from 'node:buffer';
 
-/** 单条消息最大字节数（10 MB，与 Go 端对齐） */
+/** 单条消息最大字节数（10 MB） */
 const MAX_MESSAGE_SIZE = 10 * 1024 * 1024;
 
 /**

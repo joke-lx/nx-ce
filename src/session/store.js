@@ -1,5 +1,5 @@
 /**
- * 会话存储 — 磁盘上的持久化状态
+ * session/store — 会话状态的磁盘持久化
  *
  * 参考 happy 的 sessions.json 设计：
  *   - 每个命名实例存储完整元数据
@@ -20,51 +20,6 @@ const STATE_DIR = join(homedir(), '.nx-ce', 'instances');
 /** 确保存储目录存在 */
 function ensureDir() {
   mkdirSync(STATE_DIR, { recursive: true });
-}
-
-/**
- * 会话生命周期状态枚举。
- * 参考 happy 的 lifecycleState: "running" | "stopped" | "crashed"
- */
-export const LifecycleState = Object.freeze({
-  RUNNING: 'running',
-  STOPPED: 'stopped',
-  CRASHED: 'crashed',
-  RESUMING: 'resuming',
-});
-
-/**
- * 创建一个新的状态对象（含默认值）。
- *
- * @param {string} name - 实例名称
- * @param {object} [overrides] - 覆盖字段
- * @returns {object}
- */
-export function createState(name, overrides = {}) {
-  return {
-    name,
-    pid: process.pid,
-    startedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    sessionId: null,
-    model: 'claude-sonnet-4-6',
-    host: '',
-    machineId: '',
-    claudeVersion: '',
-    lifecycleState: LifecycleState.RUNNING,
-    lifecycleStateSince: Date.now(),
-    startedBy: 'serve',
-    port: null,
-    usage: {
-      inputTokens: 0,
-      cacheCreationInputTokens: 0,
-      cacheReadInputTokens: 0,
-      outputTokens: 0,
-      contextWindow: 200000,
-      contextTokens: 0,
-    },
-    ...overrides,
-  };
 }
 
 /**
