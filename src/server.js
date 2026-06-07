@@ -25,8 +25,8 @@ import { SessionManager } from './session/manager.js';
 import { baseName } from './session/key.js';
 import { getMachineId } from './util.js';
 
-/** 默认端口 */
-const DEFAULT_PORT = 3100;
+/** 默认端口（与 background WS 客户端统一：bro_chat 侧 43720） */
+const DEFAULT_PORT = 43720;
 
 /**
  * 启动 WebSocket 持久化服务。

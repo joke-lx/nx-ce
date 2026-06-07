@@ -60,7 +60,7 @@ export async function runCli() {
 
   nx-ce help                      显示此帮助
 
-协议（ws://127.0.0.1:3100）:
+协议（ws://127.0.0.1:43720）:
   C→S: query / getSkills / getStatus / listSessions / closeSession / ping
   S→C: connected / init / turn_start / text / thinking / tool_use / done /
        error / pong / skills / status / session_list / session_closed
