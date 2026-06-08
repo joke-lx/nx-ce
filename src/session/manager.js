@@ -14,6 +14,31 @@ import { generateId, MonotonicClock } from '../util.js';
 /** 空闲 session 超时（毫秒），超过此时间无客户端则自动关闭 */
 const SESSION_IDLE_TIMEOUT_MS = 300_000; // 5 分钟
 
+/** 合法的 permissionMode 值列表（与 @anthropic-ai/claude-agent-sdk 定义同步） */
+const VALID_PERMISSION_MODES = Object.freeze([
+  'default',
+  'acceptEdits',
+  'bypassPermissions',
+  'plan',
+  'dontAsk',
+  'auto',
+]);
+
+/**
+ * 校验 permissionMode 是否合法。
+ * @param {string} [mode]
+ * @returns {string} 校验通过的值
+ * @throws {Error} 非法值时抛出
+ */
+export function validatePermissionMode(mode) {
+  if (mode === undefined || mode === null) return null;
+  if (VALID_PERMISSION_MODES.includes(mode)) return mode;
+  throw new Error(
+    `Invalid permissionMode: "${mode}". Must be one of: ${VALID_PERMISSION_MODES.join(', ')}`
+  );
+}
+
+
 // =================================================================
 // SessionManager
 // =================================================================
@@ -39,9 +64,13 @@ export class SessionManager {
    *
    * @param {string} name - 会话名称
    * @param {string} [cwd] - 工作目录（可选，默认服务器级 cwd）
+   * @param {string[]} [skills] - 技能列表
+   * @param {object} [opts] - 可选覆盖参数
+   * @param {string} [opts.model] - 模型名称
+   * @param {string} [opts.permissionMode] - 权限模式
    * @returns {Promise<Session>}
    */
-  async getOrCreate(name, cwd, skills) {
+  async getOrCreate(name, cwd, skills, opts = {}) {
     const key = sessionKey(name, cwd);
 
     // 已有活跃 session → 直接返回
@@ -67,7 +96,7 @@ export class SessionManager {
     }
 
     // 创建锁 + 创建
-    const promise = this._createSession(name, key, cwd, skills);
+    const promise = this._createSession(name, key, cwd, skills, opts);
     this._pendingCreates.set(key, promise);
 
     try {
@@ -79,9 +108,17 @@ export class SessionManager {
 
   /**
    * 创建内部 session 结构。
+   *
+   * @param {string} name
+   * @param {string} key
+   * @param {string} [cwd]
+   * @param {string[]} [skills]
+   * @param {object} [opts]
+   * @param {string} [opts.model] - 客户端指定的模型（为空时使用服务器默认模型）
+   * @param {string} [opts.permissionMode] - 客户端指定的权限模式（为空时使用 bypassPermissions）
    */
-  async _createSession(name, key, cwd, skills) {
-    const { claudePath, model, env } = this.serverOptions;
+  async _createSession(name, key, cwd, skills, opts = {}) {
+    const { claudePath, model: defaultModel, env } = this.serverOptions;
 
     // session 用自己的 cwd（优先客户端传入，fallback 到服务器级）
     const actualCwd = cwd || this.serverOptions.cwd || process.cwd();
@@ -92,9 +129,9 @@ export class SessionManager {
     // 组装 SDK 选项
     const sdkOptions = {
       cwd: actualCwd,
-      model: model || 'claude-sonnet-4-6',
+      model: opts.model || defaultModel || 'claude-sonnet-4-6',
       pathToClaudeCodeExecutable: claudePath,
-      permissionMode: 'bypassPermissions',
+      permissionMode: opts.permissionMode || 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       env: { ...process.env, ...env },
     };
@@ -294,12 +331,34 @@ export class SessionManager {
 
   /**
    * 尝试处理 session 队列中的下一个查询。
+   * 处理前会检查 queue item 中的 model/permissionMode 是否需要动态切换。
    */
   _processQueue(session) {
     if (session.closed) return;
     if (session.queue.length === 0 || session.processing) return;
 
-    const { client, prompt, id } = session.queue.shift();
+    const { client, prompt, id, model, permissionMode } = session.queue.shift();
+
+    // 动态切换模型（不同则调用 SDK setModel，仅 streaming 模式生效）
+    if (model && model !== session.sdkOptions.model) {
+      try {
+        session.response.setModel(model);
+        session.sdkOptions.model = model;
+      } catch {
+        // SDK 可能在非 streaming 模式下不支持 setModel，静默忽略
+      }
+    }
+
+    // 动态切换权限模式
+    if (permissionMode && permissionMode !== session.sdkOptions.permissionMode) {
+      try {
+        session.response.setPermissionMode(permissionMode);
+        session.sdkOptions.permissionMode = permissionMode;
+      } catch {
+        // 静默忽略
+      }
+    }
+
     session.client = client;
     session.processing = true;
     session.currentTurnId = generateId('turn');

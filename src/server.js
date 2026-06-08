@@ -21,7 +21,7 @@ import { WebSocketServer } from 'ws';
 import { hostname, machine, platform, release } from 'node:os';
 import { readState, writeState, deleteState, listStates } from './session/store.js';
 import { LifecycleState } from './session/state.js';
-import { SessionManager } from './session/manager.js';
+import { SessionManager, validatePermissionMode } from './session/manager.js';
 import { baseName } from './session/key.js';
 import { getMachineId } from './util.js';
 
@@ -99,17 +99,40 @@ export async function startServe(options) {
             break;
           }
 
+          // 校验客户端传入的可选参数
+          let permissionMode;
+          try {
+            permissionMode = validatePermissionMode(req.permissionMode);
+          } catch (err) {
+            ws.send(JSON.stringify({ type: 'error', content: err.message }));
+            break;
+          }
+
+          if (req.model !== undefined && (typeof req.model !== 'string' || !req.model.trim())) {
+            ws.send(JSON.stringify({ type: 'error', content: 'model must be a non-empty string' }));
+            break;
+          }
+
           // 支持每个 query 指定自己的工作目录
           // 同一 session name + 不同 cwd = 不同 SDK 会话
           let session;
           try {
-            session = await sessionManager.getOrCreate(sessionName, req.cwd, req.skills);
+            session = await sessionManager.getOrCreate(sessionName, req.cwd, req.skills, {
+              model: req.model,
+              permissionMode: permissionMode,
+            });
           } catch (err) {
             ws.send(JSON.stringify({ type: 'error', content: `session create failed: ${err.message}` }));
             break;
           }
 
-          session.queue.push({ client: ws, prompt: req.prompt, id: req.id });
+          session.queue.push({
+            client: ws,
+            prompt: req.prompt,
+            id: req.id,
+            model: req.model,
+            permissionMode: permissionMode,
+          });
           sessionManager._processQueue(session);
           break;
         }
