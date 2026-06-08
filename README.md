@@ -139,6 +139,7 @@ All consumers (CLI scripts, Chrome extensions, native host processes, tests) tal
 | **Per-session cwd / 工作目录隔离** | Each session works in its own directory / 每个会话拥有独立工作目录 |
 | **Idle cleanup / 空闲清理** | Sessions auto-close after 5 min of inactivity / 无活动 5 分钟后自动关闭 |
 | **Skills passthrough / skills 透传** | Pass custom skills when creating a session / 创建会话时可传入自定义 skills |
+| **Model & permission override / 模型与权限覆盖** | Per-query `model` and `permissionMode` with server-side validation / 每次查询可指定 model 和权限模式，服务端白名单校验 |
 | **Concurrency safe / 并发安全** | Per-session queues, monotonic clock, creation dedup / 每会话独立队列、单调时钟、创建去重 |
 | **Usage tracking / 用量跟踪** | Token consumption tracked per session / 每个会话独立统计 token 消耗 |
 | **Graceful shutdown / 优雅关闭** | Clean up all sessions on SIGINT/SIGTERM / 收到退出信号时清理所有会话 |
@@ -206,7 +207,7 @@ The first `query` for a given `(name, cwd)` pair creates a session. Subsequent q
 
 | type / 类型 | Fields / 字段 | Description / 说明 |
 |------|--------|-------------|
-| `query` | `prompt`, `session?`, `cwd?`, `id?` | Submit a query to a session / 向会话提交查询 |
+| `query` | `prompt`, `session?`, `cwd?`, `id?`, `model?`, `permissionMode?`, `skills?` | Submit a query to a session / 向会话提交查询 |
 | `ping` | — | Heartbeat / 心跳 |
 | `getSkills` | `session?`, `cwd?` | Fetch available skills/tools/agents |
 | `getStatus` | `session?`, `cwd?` | Query session status / 查询会话状态 |
@@ -233,6 +234,31 @@ The first `query` for a given `(name, cwd)` pair creates a session. Subsequent q
 > `session` defaults to `"default"` when omitted. The full `getSkills` response includes `mcpServers`, `plugins`, `claudeCodeVersion`, `permissionMode`, etc.
 >
 > `session` 省略时默认为 `"default"`。完整 `getSkills` 响应包含 `mcpServers`、`plugins`、`claudeCodeVersion`、`permissionMode` 等。
+
+### Permission Mode / 权限模式
+
+`permissionMode` controls how tool executions are handled / 控制工具执行权限：
+
+| Mode / 模式 | Description / 说明 |
+|------|-------------|
+| `"default"` | Standard behavior, prompts for dangerous operations / 标准行为，危险操作弹窗询问 |
+| `"acceptEdits"` | Auto-accept file edit operations / 自动接受文件编辑操作 |
+| `"bypassPermissions"` | Bypass all permission checks — escalated privilege / 绕过所有权限检查（提权模式，默认） |
+| `"plan"` | Planning mode, no actual tool execution / 计划模式，只读不执行 |
+| `"dontAsk"` | Don't prompt, deny if not pre-approved / 不弹窗，未预授权则直接拒绝 |
+| `"auto"` | Model classifier decides approve/deny / 模型分类器自动决策 |
+
+### Validation Rules / 校验规则
+
+Both `model` and `permissionMode` are validated on every `query` / 每次 `query` 都会校验：
+
+- `model` — must be a non-empty string / 必须是非空字符串
+- `permissionMode` — whitelist check against the 6 valid modes above / 白名单校验（仅以上 6 种）
+- Both are **optional** — omitting them uses server defaults / 均为可选，不传则使用服务端默认值
+
+### Full Protocol Reference / 完整协议参考
+
+See [docs/protocol.md](docs/protocol.md) for the complete protocol specification / 完整协议规范见 [docs/protocol.md](docs/protocol.md)。
 
 ---
 

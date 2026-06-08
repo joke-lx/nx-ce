@@ -22,7 +22,7 @@ import { hostname, machine, platform, release } from 'node:os';
 import { readState, writeState, deleteState, listStates } from './session/store.js';
 import { LifecycleState } from './session/state.js';
 import { SessionManager, validatePermissionMode } from './session/manager.js';
-import { baseName } from './session/key.js';
+import { baseName, sessionKey } from './session/key.js';
 import { getMachineId } from './util.js';
 
 /** 默认端口（与 background WS 客户端统一：bro_chat 侧 43720） */
@@ -195,7 +195,7 @@ export async function startServe(options) {
         }
 
         case 'getStatus': {
-          const key = `${sessionName}:${req.cwd || cwd || process.cwd()}`;
+          const key = sessionKey(sessionName, req.cwd || undefined);
           const session = sessionManager.sessions.get(key);
           const lifecycleState = session ? (session.closed ? 'stopped' : 'running') : 'stopped';
           ws.send(JSON.stringify({
