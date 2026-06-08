@@ -70,8 +70,9 @@ export function deleteState(name) {
 
 /**
  * 列出所有已知的实例。
+ * state.name 可能为 "name:cwd" 格式，自动拆分为 name 和 cwd 字段。
  *
- * @returns {Array<{ name: string, state: object }>}
+ * @returns {Array<{ name: string, cwd: string|null, state: object }>}
  */
 export function listStates() {
   ensureDir();
@@ -79,10 +80,18 @@ export function listStates() {
   return files
     .filter((f) => f.endsWith('.json'))
     .map((f) => {
-      const name = f.slice(0, -5); // 去掉 .json 后缀
-      const state = readState(name);
-      return { name, state };
-    });
+      const stem = f.slice(0, -5);
+      const state = readState(stem);
+      if (!state) return null;
+      const key = state.name || stem;
+      const idx = key.indexOf(':');
+      return {
+        name: idx === -1 ? key : key.slice(0, idx),
+        cwd: idx === -1 ? (state.cwd ?? null) : key.slice(idx + 1),
+        state,
+      };
+    })
+    .filter(Boolean);
 }
 
 /**

@@ -22,7 +22,7 @@ import { hostname, machine, platform, release } from 'node:os';
 import { readState, writeState, deleteState, listStates } from './session/store.js';
 import { LifecycleState } from './session/state.js';
 import { SessionManager, validatePermissionMode } from './session/manager.js';
-import { baseName, sessionKey } from './session/key.js';
+import { sessionKey } from './session/key.js';
 import { getMachineId } from './util.js';
 
 /** 默认端口（与 background WS 客户端统一：bro_chat 侧 43720） */
@@ -244,13 +244,14 @@ export async function startServe(options) {
           }
 
           const historical = [];
-          for (const { name, state } of listStates()) {
-            if (!state || !state.cwd) continue;
-            if (activeByKey.has(name)) continue;
+          for (const { name, cwd, state } of listStates()) {
+            if (!state || !cwd) continue;
+            const key = `${name}:${cwd}`;
+            if (activeByKey.has(key)) continue;
             historical.push({
-              key: name,
-              name: baseName(name),
-              cwd: state.cwd,
+              key,
+              name,
+              cwd,
               sessionId: state.sessionId,
               model: state.model,
               queueLength: 0,
