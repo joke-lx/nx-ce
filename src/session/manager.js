@@ -77,14 +77,19 @@ export class SessionManager {
     const existing = this.sessions.get(key);
     if (existing && !existing.closed) {
       this._cancelIdleTimer(key);
-      // 如果已有 session 但本次显式传了 skills（不是空数组），
-      // 销毁旧的（await 完成），重建带 skills 的。
-      // 占位 query 不传 skills，正常 query 才传——所以用户发真实 query 时触发重建。
-      if (skills !== undefined && skills !== null && Array.isArray(skills) && skills.length > 0) {
-        await this.destroy(key, 'recreate with skills');
-        // 销毁后必须同时清理 _pendingCreates，否则旧 promise 仍在占位，
-        // 后面的创建逻辑会被跳过，返回无 skills 的旧 session。
-        this._pendingCreates.delete(key);
+      const needsSkills = skills !== undefined && skills !== null && Array.isArray(skills) && skills.length > 0;
+      if (needsSkills) {
+        // 检查已有 session 的技能列表是否完全匹配
+        const existingSkills = Array.isArray(existing.sdkOptions?.skills) ? existing.sdkOptions.skills : [];
+        const skillsMatch = existingSkills.length === skills.length &&
+          skills.every(s => existingSkills.includes(s));
+        if (!skillsMatch) {
+          // 技能列表不同 → 强制重建
+          await this.destroy(key, 'recreate with skills');
+          this._pendingCreates.delete(key);
+        } else {
+          return existing;
+        }
       } else {
         return existing;
       }
@@ -92,7 +97,28 @@ export class SessionManager {
 
     // 正在被另一个协程创建 → 等它
     if (this._pendingCreates.has(key)) {
-      return this._pendingCreates.get(key);
+      const pendingPromise = this._pendingCreates.get(key);
+      if (skills !== undefined && skills !== null && Array.isArray(skills) && skills.length > 0) {
+        // ⚡ 新请求带了 skills，但 pending 创建可能没带。
+        //   等 pending 创建完成后，检查其 session 是否缺 skills：
+        //   缺 → 销毁重建（带 skills）；不缺 → 直接复用。
+        const pendingSession = await pendingPromise;
+        const session = this.sessions.get(key);
+        if (session && !session.closed) {
+          const hasSkills = Array.isArray(session.sdkOptions?.skills) && session.sdkOptions.skills.length > 0;
+          if (!hasSkills) {
+            await this.destroy(key, 'recreate with skills after race');
+            this._pendingCreates.delete(key);
+            // 继续下面的创建逻辑
+          } else {
+            return session;
+          }
+        } else {
+          return pendingSession;
+        }
+      } else {
+        return pendingPromise;
+      }
     }
 
     // 创建锁 + 创建
@@ -139,6 +165,8 @@ export class SessionManager {
     if (skills !== undefined && skills !== null) {
       // 显式传了 skills：不续接旧 session，只加载指定 skills
       sdkOptions.skills = skills;
+      // 即使磁盘有旧状态，也强制不用 resume — 避免 __probe__ 或旧 session 残留的 sessionId 污染
+      sdkOptions.resume = undefined;
     } else if (existingState?.sessionId) {
       // 无显式 skills（占位 query）：续接旧 session，保持上下文
       sdkOptions.resume = existingState.sessionId;
@@ -414,6 +442,34 @@ export class SessionManager {
   removeClientFromQueue(session, ws) {
     if (!session || session.closed) return;
     session.queue = session.queue.filter(item => item.client !== ws);
+  }
+
+  /**
+   * 中断当前正在处理的 turn，但不销毁 session。
+   * 中断后 session 仍可接受新的 query。
+   *
+   * @param {string} key - 内部 key（name:cwd）
+   * @returns {Promise<boolean>} 是否成功中断
+   */
+  async cancel(key) {
+    const session = this.sessions.get(key);
+    if (!session || session.closed || !session.processing) return false;
+
+    // 中断 SDK 当前处理
+    try {
+      await session.response.interrupt();
+    } catch { /* ignore */ }
+
+    // 重置 session 状态
+    session.client = null;
+    session.processing = false;
+    session.currentTurnId = null;
+    session.onTurnComplete();
+
+    // 处理队列中可能有等待的 query
+    setImmediate(() => this._processQueue(session));
+
+    return true;
   }
 
   /**

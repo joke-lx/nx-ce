@@ -212,6 +212,18 @@ export async function startServe(options) {
           break;
         }
 
+        case 'cancel': {
+          const targetCwd = req.cwd || undefined;
+          const cancelKey = sessionKey(sessionName, targetCwd);
+          const cancelled = await sessionManager.cancel(cancelKey);
+          if (cancelled) {
+            ws.send(JSON.stringify({ type: 'cancelled', session: sessionName, cwd: targetCwd }));
+          } else {
+            ws.send(JSON.stringify({ type: 'cancel_failed', content: 'no active turn to cancel' }));
+          }
+          break;
+        }
+
         case 'closeSession': {
           if (req.cwd) {
             const key = `${sessionName}:${req.cwd}`;
