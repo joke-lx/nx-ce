@@ -397,9 +397,17 @@ export class SessionManager {
       time: session.clock.next(),
     });
 
+    // 如果有显式指定的 skills，在 prompt 前强制要求模型调用
+    let finalPrompt = prompt;
+    const skills = session.sdkOptions?.skills;
+    if (Array.isArray(skills) && skills.length > 0) {
+      const skillNames = skills.map(s => `/${s}`).join(' ');
+      finalPrompt = `[你必须调用 Skill 工具来执行以下 Skill: ${skillNames}，然后根据 Skill 的指令完成用户的问题]\n\n${prompt}`;
+    }
+
     const sdkMessage = {
       type: 'user',
-      message: { role: 'user', content: prompt },
+      message: { role: 'user', content: finalPrompt },
       session_id: session.sessionId || '',
       uuid: generateId('msg'),
     };
@@ -446,7 +454,11 @@ export class SessionManager {
 
   /**
    * 中断当前正在处理的 turn，但不销毁 session。
-   * 中断后 session 仍可接受新的 query。
+   *
+   * 注意：不会调用 session.response.interrupt()，因为那会终止 SDK
+   * consumer 循环（_startConsumer 中的 for await）。改为 detach client +
+   * 重置状态，让当前 turn 自然完成（输出因 client=null 被丢弃），之后
+   * consumer 自动处理队列中的下一个 query。
    *
    * @param {string} key - 内部 key（name:cwd）
    * @returns {Promise<boolean>} 是否成功中断
@@ -455,19 +467,10 @@ export class SessionManager {
     const session = this.sessions.get(key);
     if (!session || session.closed || !session.processing) return false;
 
-    // 中断 SDK 当前处理
-    try {
-      await session.response.interrupt();
-    } catch { /* ignore */ }
-
-    // 重置 session 状态
+    // Detach client — 当前 SDK 回复被丢弃，consumer 自然流转到 turn complete
     session.client = null;
     session.processing = false;
     session.currentTurnId = null;
-    session.onTurnComplete();
-
-    // 处理队列中可能有等待的 query
-    setImmediate(() => this._processQueue(session));
 
     return true;
   }

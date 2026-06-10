@@ -22,6 +22,7 @@ const TEST_SESSIONS = [
   'model-err', 'model-err2', 'pm-err',
   'pm-all-default', 'pm-all-acceptEdits', 'pm-all-bypassPermissions',
   'pm-all-plan', 'pm-all-dontAsk', 'pm-all-auto',
+  'cancel-test',
 ];
 function cleanTestStates() {
   try { mkdirSync(STATE_DIR, { recursive: true }); } catch {}
@@ -126,7 +127,7 @@ if (!warmed) {
   } catch(e) { console.log(`  warmup: ${e.message}`); }
   c.close();
   // 每个并发 session 单独预热
-  for (const s of ['sess-a', 'sess-b', 's3a', 's3b', 's3c', 'memory-test']) {
+  for (const s of ['sess-a', 'sess-b', 's3a', 's3b', 's3c', 'memory-test', 'cancel-test']) {
     const c2 = await client();
     await c2.waitFor('connected', 30000);
     c2.send({ type: 'query', session: s, prompt: '只回答数字：1+1=？' });
@@ -234,6 +235,32 @@ await section('getStatus', async () => {
   c.send({ type: 'getStatus', session: 'default' });
   const msg = await c.waitFor('status');
   await check(msg.type === 'status', 'status');
+  c.close();
+});
+
+await section('cancel active turn', async () => {
+  const c = await client(); await c.waitFor('connected');
+  c.send({ type: 'query', session: 'cancel-test', prompt: '请详细列出从1到100的所有质数，只输出数字和逗号。' });
+  c.send({ type: 'cancel', session: 'cancel-test' });
+  const msg = await c.waitFor('cancelled');
+  await check(msg.type === 'cancelled', `cancelled: ${JSON.stringify(msg)}`);
+  c.close();
+
+  // 用新连接验证 session 仍可用（旧连接关闭后 session.client 被置 null，
+  // 不会收到已取消 turn 的残留 done 消息）
+  await sleep(2000);
+  const c2 = await client(); await c2.waitFor('connected');
+  c2.send({ type: 'query', session: 'cancel-test', prompt: '只回答数字：1+1=？' });
+  const { text } = await c2.collectText();
+  await check(/^2$/.test(text.trim()), `resume after cancel: ${text.trim()}`);
+  c2.close();
+});
+
+await section('cancel idle session (no active turn)', async () => {
+  const c = await client(); await c.waitFor('connected');
+  c.send({ type: 'cancel', session: 'cancel-idle' });
+  const msg = await c.waitFor('cancel_failed');
+  await check(msg.type === 'cancel_failed', `cancel_failed: ${msg.content}`);
   c.close();
 });
 

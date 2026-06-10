@@ -77,7 +77,7 @@ Or run the test suite / 或运行测试：
 
 ```bash
 node test/serve-test.mjs
-# Expected: PASS: 14  FAIL: 0
+# Expected: PASS: 16  FAIL: 0
 ```
 
 ---
@@ -140,6 +140,7 @@ All consumers (CLI scripts, Chrome extensions, native host processes, tests) tal
 | **Idle cleanup / 空闲清理** | Sessions auto-close after 5 min of inactivity / 无活动 5 分钟后自动关闭 |
 | **Skills passthrough / skills 透传** | Pass custom skills when creating a session / 创建会话时可传入自定义 skills |
 | **Model & permission override / 模型与权限覆盖** | Per-query `model` and `permissionMode` with server-side validation / 每次查询可指定 model 和权限模式，服务端白名单校验 |
+| **Interrupt / 中断对话** | Cancel an active turn without destroying the session / 中断当前回复而不销毁会话 |
 | **Concurrency safe / 并发安全** | Per-session queues, monotonic clock, creation dedup / 每会话独立队列、单调时钟、创建去重 |
 | **Usage tracking / 用量跟踪** | Token consumption tracked per session / 每个会话独立统计 token 消耗 |
 | **Graceful shutdown / 优雅关闭** | Clean up all sessions on SIGINT/SIGTERM / 收到退出信号时清理所有会话 |
@@ -212,6 +213,7 @@ The first `query` for a given `(name, cwd)` pair creates a session. Subsequent q
 | `getSkills` | `session?`, `cwd?` | Fetch available skills/tools/agents |
 | `getStatus` | `session?`, `cwd?` | Query session status / 查询会话状态 |
 | `closeSession` | `session`, `cwd?` | Close session(s) / 关闭会话 |
+| `cancel` | `session`, `cwd?` | Cancel the active turn without destroying the session / 中断当前回复而不销毁会话 |
 | `listSessions` | — | List all active + historical sessions / 列出所有活跃和历史会话 |
 
 ### Server → Client / 服务端 → 客户端
@@ -229,6 +231,8 @@ The first `query` for a given `(name, cwd)` pair creates a session. Subsequent q
 ← { "type": "status",        "session": "...", "cwd": "...", "isActive": true, "queueLength": N }
 ← { "type": "session_list",  "sessions": [...] }
 ← { "type": "session_closed","session": "...", "cwd": "..." }
+← { "type": "cancelled",     "session": "...", "cwd": "..." }
+← { "type": "cancel_failed", "content": "no active turn to cancel" }
 ```
 
 > `session` defaults to `"default"` when omitted. The full `getSkills` response includes `mcpServers`, `plugins`, `claudeCodeVersion`, `permissionMode`, etc.
@@ -317,10 +321,10 @@ nx-ce serve --port 43720
 # Run tests (another terminal) / 运行测试（另开终端）
 node test/serve-test.mjs
 
-# Expected: PASS: 14  FAIL: 0
+# Expected: PASS: 16  FAIL: 0
 ```
 
-Tests cover / 测试覆盖：connection, ping/pong, single query, multi-session isolation, 3 concurrent sessions, conversation resume, listSessions, closeSession, getSkills, getStatus.
+Tests cover / 测试覆盖：connection, ping/pong, single query, multi-session isolation, 3 concurrent sessions, conversation resume, listSessions, closeSession, getSkills, getStatus, cancel active turn, cancel idle session.
 
 ---
 
