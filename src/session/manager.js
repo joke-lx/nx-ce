@@ -455,10 +455,12 @@ export class SessionManager {
   /**
    * 中断当前正在处理的 turn，但不销毁 session。
    *
-   * 注意：不会调用 session.response.interrupt()，因为那会终止 SDK
-   * consumer 循环（_startConsumer 中的 for await）。改为 detach client +
-   * 重置状态，让当前 turn 自然完成（输出因 client=null 被丢弃），之后
-   * consumer 自动处理队列中的下一个 query。
+   * notice: 不调用 session.response.interrupt()（会终止 consumer 循环），
+   * 也不设 processing=false（会允许新 query 提前绑定 client 并收到残留输出）。
+   *
+   * 策略：detach client + 保持 processing=true，让 consumer 循环自然跑完
+   * result 消息。在 result handler 中 processing 被设回 false，触发
+   * _processQueue 处理队列中等待的下一个 query。
    *
    * @param {string} key - 内部 key（name:cwd）
    * @returns {Promise<boolean>} 是否成功中断
@@ -467,10 +469,11 @@ export class SessionManager {
     const session = this.sessions.get(key);
     if (!session || session.closed || !session.processing) return false;
 
-    // Detach client — 当前 SDK 回复被丢弃，consumer 自然流转到 turn complete
+    // Detach client — 后续输出因 client=null 被丢弃
     session.client = null;
-    session.processing = false;
     session.currentTurnId = null;
+    // 保持 processing=true — 阻止 _processQueue 接收新 query，
+    // 直到 consumer 循环到达 result 消息自然设回 false
 
     return true;
   }
